@@ -10,7 +10,7 @@ use clap::{Arg, ArgAction, ArgGroup, ArgMatches, command, value_parser};
 use csv::ReaderBuilder;
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write, stdout};
 use std::process::exit;
@@ -72,17 +72,19 @@ impl OxiTarql {
             });
 
         let prefixes = extract_prefixes(&query_str);
+        let query_vars = extract_variables(&query_str);
 
         let file = BufReader::with_capacity(100000, File::open(&self.input)?);
 
         let mut rdr = ReaderBuilder::new()
             .has_headers(self.headers)
+            .delimiter(match self.tab{
+                true => '\t' as u8,
+                _ => self.delimiter.chars().next().unwrap() as u8
+            })
+            .quote(self.quote_char.chars().next().unwrap() as u8)
+            .escape(Some(self.escape_char.chars().next().unwrap() as u8))
             .from_reader(file);
-
-        let alphabet_column_names: Vec<String> = ('a'..='z')
-            .chain('A'..='Z')
-            .map(|c| c.to_string())
-            .collect();
 
         let mut headers = Vec::new();
 
@@ -93,24 +95,36 @@ impl OxiTarql {
                 headers.push(clean_column(field, &self.normalise).to_string());
             }
         } else {
+            let alphabet_column_names: Vec<String> = ('a'..='z')
+                .chain('A'..='Z')
+                .map(|c| c.to_string())
+                .collect();
+
             headers = alphabet_column_names.clone();
         }
 
-        // let headers: Vec<String> = rdr.headers()?.into_iter().map(String::from)
-        //     .collect();
         for result in rdr.records() {
             // The iterator yields Result<StringRecord, Error>, so we check the
             // error here.
-            let record = result?;
+            let record = match result {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Error reading row {}: {:?}", _row, e);
+                    exit(-1);
+                }
+            };
             // println!("{:?}", headers);
             // println!("{:?}", record);
             let mut prepared = evaluator.prepare(&query);
             for (varname, value) in headers.iter().zip(record.iter()) {
-                prepared =
-                    prepared.substitute_variable(Variable::new(varname)?, Literal::from(value));
+                if query_vars.contains(varname) {
+                    prepared =
+                        prepared.substitute_variable(Variable::new(varname)?, Literal::from(value));
+                }
             }
-            // FIXME
-            // prepared = prepared.substitute_variable(Variable::new("ROWNUM")?, Literal::from(_row));
+            if query_vars.contains("ROWNUM") {
+                prepared = prepared.substitute_variable(Variable::new("ROWNUM")?, Literal::from(_row));
+            }
 
             let results = prepared.execute(&store);
             if let QueryResults::Graph(triples) = results.unwrap() {
@@ -120,7 +134,7 @@ impl OxiTarql {
             }
 
             _row += 1;
-            if _row > self.test {
+            if self.test != 0 && _row == self.test {
                 break;
             }
         }
@@ -170,6 +184,14 @@ fn extract_prefixes(query_text: &String) -> HashMap<String, String> {
     prefix_map
 }
 
+fn extract_variables(query_text: &String) -> HashSet<String> {
+    let re = Regex::new(r"\?([A-Za-z_][A-Za-z_0-9]*?)[^A-Za-z_0-9]").unwrap();
+    re.captures_iter(query_text)
+        .map(|c| c.extract())
+        .map(|(_, [varname])| varname.to_string())
+        .collect()
+}
+
 fn clean_column(field: &str, normalise: &bool) -> String {
     if *normalise {
         field.trim().to_uppercase().replace('\"', "")
@@ -186,6 +208,7 @@ fn parse_args() -> ArgMatches {
                 .short('d')
                 .long("delimiter")
                 .default_value(",")
+                .conflicts_with("tab")
                 .help("Delimiting character of the input file"),
         )
         .arg(
@@ -193,6 +216,7 @@ fn parse_args() -> ArgMatches {
                 .short('t')
                 .long("tab")
                 .action(ArgAction::SetTrue)
+                .conflicts_with("delimiter")
                 .help("Is the Input tab-separated (TSV)?"),
         )
         .arg(
@@ -257,20 +281,21 @@ fn parse_args() -> ArgMatches {
             Arg::new("test")
                 .long("test")
                 .value_parser(value_parser!(u32).range(1..50))
-                .default_value("5")
                 .action(ArgAction::Set)
                 .num_args(0..=1)
                 .require_equals(true)
                 .default_missing_value("5")
-                .help("Show output for first N records"),
+                .help("Show output for first TEST records (default=5)"),
         )
         .arg(
             Arg::new("dedup")
                 .long("dedup")
-                .value_parser(value_parser!(u32).range(10000..50000000))
-                .default_value("100000")
+                .value_parser(value_parser!(u32).range(1000..=5000000))
+                .default_missing_value("1000")
+                .num_args(0..=1)
+                .require_equals(true)
                 .action(ArgAction::Set)
-                .help("Window size in which to remove duplicate triples"),
+                .help("Window size in which to remove duplicate triples (default=1000)"),
         )
         .arg(
             Arg::new("output")
@@ -306,7 +331,10 @@ fn main() {
     let mut tarql = OxiTarql {
         delimiter: matches.get_one::<String>("delimiter").unwrap().to_string(),
         tab: matches.get_flag("tab"),
-        test: *matches.get_one::<u32>("test").unwrap(),
+        test: match matches.get_one::<u32>("test") {
+            None => 0,
+            Some(t) => *t
+        },
         headers: matches.get_flag("headers"),
         escape_char: matches
             .get_one::<String>("escape_char")
@@ -317,7 +345,10 @@ fn main() {
         gzip: matches.get_flag("gzip"),
         quads: matches.get_flag("quads"),
         ntriples: matches.get_flag("ntriples"),
-        dedup: *matches.get_one::<u32>("dedup").unwrap(),
+        dedup: match matches.get_one::<u32>("dedup") {
+            None => 0,
+            Some(t) => *t
+        },
         named_graph: matches.get_one::<String>("name").unwrap().to_string(),
         input: matches.get_one::<String>("input").unwrap().to_string(),
         output: matches.get_one::<String>("output").unwrap().to_string(),
