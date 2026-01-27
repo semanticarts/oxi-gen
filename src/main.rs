@@ -5,6 +5,7 @@ use oxigraph::sparql::QueryResults;
 use regex::Regex;
 use spareval::QueryEvaluator;
 use spargebra::SparqlParser;
+use oxrdfio::{RdfFormat, RdfSerializer};
 
 use clap::{Arg, ArgAction, ArgGroup, ArgMatches, command, value_parser};
 use csv::ReaderBuilder;
@@ -45,7 +46,8 @@ impl OxiTarql {
         // println!("Input {:?}", input);
         let mut _row = 0;
 
-        let store = Dataset::new();
+        let empty_store = Dataset::new();
+        let mut store = HashSet::<Triple>::new();
         
         let query_str = fs::read_to_string(&self.query).unwrap();
         let query = match SparqlParser::new()
@@ -148,18 +150,32 @@ impl OxiTarql {
                     prepared = prepared.substitute_variable(Variable::new("ROWNUM")?, Literal::from(_row));
                 }
 
-                let results = prepared.execute(&store);
+                let results = prepared.execute(&empty_store);
                 if let QueryResults::Graph(triples) = results.unwrap() {
                     for triple in triples {
-                        let _ = writeln!(out_writer, "{}", triple?);
+                        if self.dedup > 0 {
+                            store.insert(triple?);
+                        } else {
+                            let _ = writeln!(out_writer, "{}", triple?);
+                        }
                     }
                 }
+            }
+
+            // If deduplicating and hit limit, flush store to output
+            if self.dedup > 0 && store.len() >= self.dedup.try_into().unwrap() {
+                flush_store(&mut store, &mut out_writer)?;
             }
 
             _row += 1;
             if self.test != 0 && _row == self.test {
                 break;
             }
+        }
+
+        // If deduplicating, flush remaining store to output
+        if self.dedup > 0 && store.len() > 0 {
+            flush_store(&mut store, &mut out_writer)?;
         }
 
         out_writer.flush().expect("Error flushing to output file");
@@ -188,6 +204,17 @@ impl OxiTarql {
         bindings
     }
 
+}
+
+fn flush_store(store: &mut HashSet<Triple>, out_writer: &mut BufWriter<Box<dyn Write + 'static>>) -> Result<(), Box<dyn Error + 'static>> {
+    let mut serializer = RdfSerializer::from_format(RdfFormat::NTriples).for_writer(Vec::new());
+    for triple in store.iter() {
+        serializer.serialize_triple(triple)?;
+    }
+    let rdf_str = serializer.finish().unwrap();
+    let _ = out_writer.write_all(&rdf_str);
+    store.clear();
+    Ok(())
 }
 
 fn expand_prefix(prefixes: &HashMap<String, String>, prefix: &Term) -> Option<Term> {
