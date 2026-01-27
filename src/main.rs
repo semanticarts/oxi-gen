@@ -1,3 +1,4 @@
+use std::ops::Index;
 use std::{error::Error, fs};
 
 use oxigraph::model::*;
@@ -33,7 +34,7 @@ pub struct OxiTarql {
     named_graph: String,
     input: String,
     output: String,
-    query: String,
+    query: String
 }
 
 impl OxiTarql {
@@ -45,9 +46,11 @@ impl OxiTarql {
         let mut _row = 0;
 
         let store = Dataset::new();
-        let evaluator = QueryEvaluator::new();
+        
         let query_str = fs::read_to_string(&self.query).unwrap();
-        let query = match SparqlParser::new().parse_query(&query_str) {
+        let query = match SparqlParser::new()
+            .with_prefix("tarql", "https://semanticarts.com/tarql/")?
+            .parse_query(&query_str) {
             Ok(qr) => qr,
             Err(e) => {
                 eprintln!("SPARQL Syntax Error in query: {:?}", e);
@@ -71,7 +74,25 @@ impl OxiTarql {
                 }
             });
 
-        let prefixes = extract_prefixes(&query_str);
+        let prefixes = extract_prefixes(&query_str).to_owned();
+        let p2 = prefixes.clone();
+        let evaluator = QueryEvaluator::new()
+                .with_custom_function(
+                    NamedNode::new("https://semanticarts.com/tarql/expandPrefix")?,
+                    move |args| {
+                        args.get(0)
+                            .map(|p| expand_prefix(&prefixes, &p)
+                            .unwrap())
+                    }
+                )
+                .with_custom_function(
+                    NamedNode::new("https://semanticarts.com/tarql/expandPrefixedName")?,
+                    move |args| {
+                        args.get(0)
+                            .map(|p| expand_prefixed_name(&p2, &p)
+                            .unwrap())
+                    }
+                );
         let query_vars = extract_variables(&query_str);
 
         let file = BufReader::with_capacity(100000, File::open(&self.input)?);
@@ -145,39 +166,73 @@ impl OxiTarql {
 
 }
 
-fn replace_iri_with_prefix(item: &String, prefix_map: &HashMap<String, &str>) -> String {
-    let mut new_item = item.clone();
-    let typed_value: String;
-
-    if new_item.contains("^^") {
-        let tv = new_item.split("^^").collect::<Vec<&str>>();
-        typed_value = format!("{}^^", tv[0].to_string());
-        new_item = tv[1].to_string();
-    } else {
-        typed_value = "".to_string();
-    }
-
-    // check if this is IRI that can be replaced with a prefix
-    if new_item.contains("<") && new_item.contains("#") {
-        new_item = new_item.replace("<", "").replace(">", "");
-        let sp = new_item.split("#").collect::<Vec<&str>>();
-        if prefix_map.contains_key(&sp[0].to_string()) {
-            new_item = format!(
-                "{}{}{}",
-                typed_value,
-                prefix_map.get(&sp[0].to_string()).unwrap().to_string(),
-                sp[1]
-            );
+fn expand_prefix(prefixes: &HashMap<String, String>, prefix: &Term) -> Option<Term> {
+    let prefix_name = match prefix {
+        Term::Literal(l) => l.value().to_string(),
+        _ => {
+            eprintln!("Invalid argument passed to expandPrefix: {:?}", prefix);
+            exit(-1);
         }
-    }
-
-    new_item
+    };
+    let expanded = prefixes.get(&prefix_name).map(|iri| Term::Literal(Literal::from(iri.to_string())));
+    expanded
 }
+
+fn expand_prefixed_name(prefixes: &HashMap<String, String>, qname: &Term) -> Option<Term> {
+    let qname_str = match qname {
+        Term::Literal(l) => l.value().to_string(),
+        _ => {
+            eprintln!("Invalid argument passed to expandPrefixedName: {:?}", qname);
+            exit(-1);
+        }
+    };
+    let (prefix_name, rest) = qname_str.split_at(match qname_str.find(':') {
+        Some(offset) => offset,
+        _ => {
+            eprintln!("Malformed QName in expandPrefixedName: {:?}", &qname_str);
+            return None
+        }
+    });
+    prefixes.get(prefix_name)
+        .map(|pref_iri| Term::NamedNode(
+            NamedNode::new(pref_iri.to_string() + rest).unwrap()
+        )
+    )
+}
+
+// fn replace_iri_with_prefix(item: &String, prefix_map: &HashMap<String, &str>) -> String {
+//     let mut new_item = item.clone();
+//     let typed_value: String;
+
+//     if new_item.contains("^^") {
+//         let tv = new_item.split("^^").collect::<Vec<&str>>();
+//         typed_value = format!("{}^^", tv[0].to_string());
+//         new_item = tv[1].to_string();
+//     } else {
+//         typed_value = "".to_string();
+//     }
+
+//     // check if this is IRI that can be replaced with a prefix
+//     if new_item.contains("<") && new_item.contains("#") {
+//         new_item = new_item.replace("<", "").replace(">", "");
+//         let sp = new_item.split("#").collect::<Vec<&str>>();
+//         if prefix_map.contains_key(&sp[0].to_string()) {
+//             new_item = format!(
+//                 "{}{}{}",
+//                 typed_value,
+//                 prefix_map.get(&sp[0].to_string()).unwrap().to_string(),
+//                 sp[1]
+//             );
+//         }
+//     }
+
+//     new_item
+// }
 
 fn extract_prefixes(query_text: &String) -> HashMap<String, String> {
     let mut prefix_map = HashMap::new();
 
-    let re = Regex::new(r"\b[pP][rR][eE][fF][iI][xX]\s+(\S*?):\s+<(.+?)> \.").unwrap();
+    let re = Regex::new(r"\b[pP][rR][eE][fF][iI][xX]\s+(\S*?):\s+<(.+?)>").unwrap();
     for (_, [prefix, iri]) in re.captures_iter(query_text).map(|c| c.extract()) {
         prefix_map.insert(String::from(prefix), String::from(iri));
     }
