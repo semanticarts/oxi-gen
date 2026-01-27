@@ -1,4 +1,3 @@
-use std::ops::Index;
 use std::{error::Error, fs};
 
 use oxigraph::model::*;
@@ -26,7 +25,7 @@ pub struct OxiTarql {
     headers: bool,
     escape_char: String,
     quote_char: String,
-    normalise: bool,
+    normalize: bool,
     gzip: bool,
     ntriples: bool,
     quads: bool,
@@ -34,7 +33,8 @@ pub struct OxiTarql {
     named_graph: String,
     input: String,
     output: String,
-    query: String
+    query: String,
+    split: Vec<(String, String, String)>
 }
 
 impl OxiTarql {
@@ -80,16 +80,16 @@ impl OxiTarql {
                 .with_custom_function(
                     NamedNode::new("https://semanticarts.com/tarql/expandPrefix")?,
                     move |args| {
-                        args.get(0)
-                            .map(|p| expand_prefix(&prefixes, &p)
+                        args.first()
+                            .map(|p| expand_prefix(&prefixes, p)
                             .unwrap())
                     }
                 )
                 .with_custom_function(
                     NamedNode::new("https://semanticarts.com/tarql/expandPrefixedName")?,
                     move |args| {
-                        args.get(0)
-                            .map(|p| expand_prefixed_name(&p2, &p)
+                        args.first()
+                            .map(|p| expand_prefixed_name(&p2, p)
                             .unwrap())
                     }
                 );
@@ -100,7 +100,7 @@ impl OxiTarql {
         let mut rdr = ReaderBuilder::new()
             .has_headers(self.headers)
             .delimiter(match self.tab{
-                true => '\t' as u8,
+                true => b'\t',
                 _ => self.delimiter.chars().next().unwrap() as u8
             })
             .quote(self.quote_char.chars().next().unwrap() as u8)
@@ -113,7 +113,7 @@ impl OxiTarql {
             let header = rdr.headers()?.clone();
 
             for field in &header {
-                headers.push(clean_column(field, &self.normalise).to_string());
+                headers.push(clean_column(field, &self.normalize).to_string());
             }
         } else {
             let alphabet_column_names: Vec<String> = ('a'..='z')
@@ -134,23 +134,25 @@ impl OxiTarql {
                     exit(-1);
                 }
             };
-            // println!("{:?}", headers);
-            // println!("{:?}", record);
-            let mut prepared = evaluator.prepare(&query);
-            for (varname, value) in headers.iter().zip(record.iter()) {
-                if query_vars.contains(varname) {
-                    prepared =
-                        prepared.substitute_variable(Variable::new(varname)?, Literal::from(value));
-                }
-            }
-            if query_vars.contains("ROWNUM") {
-                prepared = prepared.substitute_variable(Variable::new("ROWNUM")?, Literal::from(_row));
-            }
 
-            let results = prepared.execute(&store);
-            if let QueryResults::Graph(triples) = results.unwrap() {
-                for triple in triples {
-                    let _ = writeln!(out_writer, "{}", triple?);
+            let unwrapped = self.apply_split(&record, &headers);
+            for unwrapped_row in unwrapped {
+                let mut prepared = evaluator.prepare(&query);
+                for (varname, value) in unwrapped_row {
+                    if query_vars.contains(&varname) {
+                        prepared =
+                            prepared.substitute_variable(Variable::new(varname)?, Literal::from(value));
+                    }
+                }
+                if query_vars.contains("ROWNUM") {
+                    prepared = prepared.substitute_variable(Variable::new("ROWNUM")?, Literal::from(_row));
+                }
+
+                let results = prepared.execute(&store);
+                if let QueryResults::Graph(triples) = results.unwrap() {
+                    for triple in triples {
+                        let _ = writeln!(out_writer, "{}", triple?);
+                    }
                 }
             }
 
@@ -164,6 +166,28 @@ impl OxiTarql {
         Ok(())
     }
 
+    fn apply_split<'a>(&self, record: &'a csv::StringRecord, headers: &'a Vec<String>) -> Vec<Vec<(String, &'a str)>> {
+        let mut bindings: Vec<Vec<(String, &'a str)>> = 
+            vec![headers.iter().map(|h| h.clone()).zip(record.iter()).collect()];
+        for (original, split, delimiter) in self.split.iter() {
+            let original_idx = match headers.iter().position(|h| h == original) {
+                None => continue,
+                Some(idx) => idx
+            };
+            let mut next_vals: Vec<Vec<(String, &str)>> = vec![];
+            for val_set in bindings {
+                let original_val = val_set[original_idx].1;
+                for split_val in original_val.split(delimiter) {
+                    let mut modified_row = val_set.clone();
+                    modified_row.push((split.clone(), split_val));
+                    next_vals.push(modified_row);
+                }
+            }
+            bindings = next_vals;
+        }
+        bindings
+    }
+
 }
 
 fn expand_prefix(prefixes: &HashMap<String, String>, prefix: &Term) -> Option<Term> {
@@ -174,8 +198,7 @@ fn expand_prefix(prefixes: &HashMap<String, String>, prefix: &Term) -> Option<Te
             exit(-1);
         }
     };
-    let expanded = prefixes.get(&prefix_name).map(|iri| Term::Literal(Literal::from(iri.to_string())));
-    expanded
+    prefixes.get(&prefix_name).map(|iri| Term::Literal(Literal::from(iri.to_string())))
 }
 
 fn expand_prefixed_name(prefixes: &HashMap<String, String>, qname: &Term) -> Option<Term> {
@@ -195,41 +218,12 @@ fn expand_prefixed_name(prefixes: &HashMap<String, String>, qname: &Term) -> Opt
     });
     prefixes.get(prefix_name)
         .map(|pref_iri| Term::NamedNode(
-            NamedNode::new(pref_iri.to_string() + rest).unwrap()
+            NamedNode::new(pref_iri.to_string() + rest.get(1..).unwrap()).unwrap()
         )
     )
 }
 
-// fn replace_iri_with_prefix(item: &String, prefix_map: &HashMap<String, &str>) -> String {
-//     let mut new_item = item.clone();
-//     let typed_value: String;
-
-//     if new_item.contains("^^") {
-//         let tv = new_item.split("^^").collect::<Vec<&str>>();
-//         typed_value = format!("{}^^", tv[0].to_string());
-//         new_item = tv[1].to_string();
-//     } else {
-//         typed_value = "".to_string();
-//     }
-
-//     // check if this is IRI that can be replaced with a prefix
-//     if new_item.contains("<") && new_item.contains("#") {
-//         new_item = new_item.replace("<", "").replace(">", "");
-//         let sp = new_item.split("#").collect::<Vec<&str>>();
-//         if prefix_map.contains_key(&sp[0].to_string()) {
-//             new_item = format!(
-//                 "{}{}{}",
-//                 typed_value,
-//                 prefix_map.get(&sp[0].to_string()).unwrap().to_string(),
-//                 sp[1]
-//             );
-//         }
-//     }
-
-//     new_item
-// }
-
-fn extract_prefixes(query_text: &String) -> HashMap<String, String> {
+fn extract_prefixes(query_text: &str) -> HashMap<String, String> {
     let mut prefix_map = HashMap::new();
 
     let re = Regex::new(r"\b[pP][rR][eE][fF][iI][xX]\s+(\S*?):\s+<(.+?)>").unwrap();
@@ -239,7 +233,7 @@ fn extract_prefixes(query_text: &String) -> HashMap<String, String> {
     prefix_map
 }
 
-fn extract_variables(query_text: &String) -> HashSet<String> {
+fn extract_variables(query_text: &str) -> HashSet<String> {
     let re = Regex::new(r"\?([A-Za-z_][A-Za-z_0-9]*?)[^A-Za-z_0-9]").unwrap();
     re.captures_iter(query_text)
         .map(|c| c.extract())
@@ -247,8 +241,8 @@ fn extract_variables(query_text: &String) -> HashSet<String> {
         .collect()
 }
 
-fn clean_column(field: &str, normalise: &bool) -> String {
-    if *normalise {
+fn clean_column(field: &str, normalize: &bool) -> String {
+    if *normalize {
         field.trim().to_uppercase().replace('\"', "")
     } else {
         field.trim().replace('\"', "")
@@ -288,12 +282,12 @@ fn parse_args() -> ArgMatches {
                 .help("Quote character used in the input file"),
         )
         .arg(
-            Arg::new("normalise")
+            Arg::new("normalize")
                 .short('n')
-                .long("normalise")
+                .long("normalize")
                 .action(ArgAction::SetTrue)
                 .help(
-                    "Normalise column names - convert all to UPPERCASE [default: no normalisation]",
+                    "Normalize column names - convert all to UPPERCASE [default: no normalization]",
                 ),
         )
         .arg(
@@ -343,6 +337,14 @@ fn parse_args() -> ArgMatches {
                 .help("Show output for first TEST records (default=5)"),
         )
         .arg(
+            Arg::new("split")
+                .long("split")
+                .action(ArgAction::Append)
+                .num_args(3)
+                .value_names(["ORIGINAL", "SPLIT", "DELIMITER"])
+                .help("Split column ORIGINAL into multiple values in SPLIT on DELIMITER")
+        )
+        .arg(
             Arg::new("dedup")
                 .long("dedup")
                 .value_parser(value_parser!(u32).range(1000..=5000000))
@@ -383,6 +385,18 @@ fn main() {
     // parse the supplied arguments
     let matches = parse_args();
 
+    let split_def = match matches.get_many::<String>("split") {
+        None => vec![],
+        Some(splits) => {
+            let mut sval_it = splits.map(|sd| sd.clone());
+            let mut split_defs = Vec::<(String, String, String)>::new();
+            while let Some(orig) = sval_it.next() {
+                split_defs.push((orig, sval_it.next().unwrap(), sval_it.next().unwrap()));
+            }
+            split_defs
+        }
+    };
+
     let mut tarql = OxiTarql {
         delimiter: matches.get_one::<String>("delimiter").unwrap().to_string(),
         tab: matches.get_flag("tab"),
@@ -396,7 +410,7 @@ fn main() {
             .unwrap()
             .to_string(),
         quote_char: matches.get_one::<String>("quote_char").unwrap().to_string(),
-        normalise: matches.get_flag("normalise"),
+        normalize: matches.get_flag("normalize"),
         gzip: matches.get_flag("gzip"),
         quads: matches.get_flag("quads"),
         ntriples: matches.get_flag("ntriples"),
@@ -408,6 +422,7 @@ fn main() {
         input: matches.get_one::<String>("input").unwrap().to_string(),
         output: matches.get_one::<String>("output").unwrap().to_string(),
         query: matches.get_one::<String>("query").unwrap().to_string(),
+        split: split_def
     };
 
     let start = Instant::now();
