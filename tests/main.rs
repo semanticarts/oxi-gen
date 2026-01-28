@@ -1,6 +1,5 @@
-use oxi_tarql::OxiTarql;
+use oxi_tarql::configure_transform;
 use std::fs;
-use std::process::Command;
 use std::path::PathBuf;
 use std::io::Read;
 use flate2::read::GzDecoder;
@@ -22,27 +21,18 @@ fn test_integration_split_with_custom_functions() {
     assert!(input_path.exists(), "Input file should exist: {:?}", input_path);
     assert!(query_path.exists(), "Query file should exist: {:?}", query_path);
 
-    let mut tarql = OxiTarql {
-        delimiter: ",".to_string(),
-        tab: false,
-        test: 0,
-        headers: false, // -H flag means "no-header-row", sets to false
-        escape_char: "\\".to_string(),
-        quote_char: "\"".to_string(),
-        normalize: false,
-        gzip: false,
-        ntriples: false,
-        quads: false,
-        dedup: 0,
-        named_graph: "".to_string(),
-        input: input_path.to_str().unwrap().to_string(),
-        output: temp_file.to_str().unwrap().to_string(),
-        query: query_path.to_str().unwrap().to_string(),
-        split: vec![
-            ("d".to_string(), "d_s".to_string(), ";".to_string()),
-            ("e".to_string(), "e_s".to_string(), " ".to_string()),
-        ],
-    };
+    // Build command-line arguments for configure_transform
+    let args = vec![
+        "oxi_tarql".to_string(),
+        "--input".to_string(), input_path.to_str().unwrap().to_string(),
+        "--query".to_string(), query_path.to_str().unwrap().to_string(),
+        "--output".to_string(), temp_file.to_str().unwrap().to_string(),
+        "-H".to_string(), // no-header-row flag
+        "--split".to_string(), "d".to_string(), "d_s".to_string(), ";".to_string(),
+        "--split".to_string(), "e".to_string(), "e_s".to_string(), " ".to_string(),
+    ];
+
+    let mut tarql = configure_transform(args);
 
     // Run the transformation
     let result = tarql.transform();
@@ -82,44 +72,21 @@ fn test_integration_with_dedup_and_gzip() {
     assert!(input_path.exists(), "Input file should exist: {:?}", input_path);
     assert!(query_path.exists(), "Query file should exist: {:?}", query_path);
 
-    // Find the binary (it should be in target/debug or target/release)
-    let binary = if cfg!(debug_assertions) {
-        manifest_dir.join("target/debug/oxi_tarql")
-    } else {
-        manifest_dir.join("target/release/oxi_tarql")
-    };
+    // Build command-line arguments for configure_transform
+    let args = vec![
+        "oxi_tarql".to_string(),
+        "--input".to_string(), input_path.to_str().unwrap().to_string(),
+        "--query".to_string(), query_path.to_str().unwrap().to_string(),
+        "--output".to_string(), temp_file.to_str().unwrap().to_string(),
+        "--gzip".to_string(), 
+        "--dedup=1000".to_string(),
+    ];
 
-    // If binary doesn't exist, try to build it
-    if !binary.exists() {
-        let build_result = Command::new("cargo")
-            .args(["build"])
-            .current_dir(&manifest_dir)
-            .output()
-            .expect("Failed to build binary");
+    let mut tarql = configure_transform(args);
 
-        assert!(build_result.status.success(), "Build failed: {:?}",
-                String::from_utf8_lossy(&build_result.stderr));
-    }
-
-    assert!(binary.exists(), "Binary should exist at {:?}", binary);
-
-    // Run the binary with command-line arguments
-    let output = Command::new(&binary)
-        .args([
-            "--input", input_path.to_str().unwrap(),
-            "--query", query_path.to_str().unwrap(),
-            "--output", temp_file.to_str().unwrap(),
-            "--gzip",
-            "--dedup=1000",
-        ])
-        .output()
-        .expect("Failed to execute binary");
-
-    // Check if command succeeded
-    assert!(output.status.success(),
-            "Command failed with status: {:?}\nStderr: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr));
+    // Run the transformation
+    let result = tarql.transform();
+    assert!(result.is_ok(), "Transform should succeed: {:?}", result.err());
 
     // Verify output file exists
     assert!(temp_file.exists(), "Output file should exist at {:?}", temp_file);
