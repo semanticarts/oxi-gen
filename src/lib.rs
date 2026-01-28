@@ -15,7 +15,7 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Write, stdout};
 use std::process::exit;
 
-use clap::{Arg, ArgAction, ArgGroup, ArgMatches, command, value_parser};
+use clap::{Arg, ArgAction, ArgMatches, command, value_parser};
 
 #[allow(dead_code)]
 #[derive(Default)]
@@ -29,9 +29,7 @@ pub struct OxiTarql {
     pub normalize: bool,
     pub gzip: bool,
     pub ntriples: bool,
-    pub quads: bool,
     pub dedup: u32,
-    pub named_graph: String,
     pub input: String,
     pub output: String,
     pub query: String,
@@ -72,11 +70,13 @@ impl OxiTarql {
             });
 
         let prefixes = extract_prefixes(&query_str).to_owned();
+        // Each captured context gets its own copy of the prefixes
+        let p1 = prefixes.clone();
         let p2 = prefixes.clone();
         let evaluator = QueryEvaluator::new()
             .with_custom_function(
                 NamedNode::new("https://semanticarts.com/tarql/expandPrefix")?,
-                move |args| args.first().map(|p| expand_prefix(&prefixes, p).unwrap()),
+                move |args| args.first().map(|p| expand_prefix(&p1, p).unwrap()),
             )
             .with_custom_function(
                 NamedNode::new("https://semanticarts.com/tarql/expandPrefixedName")?,
@@ -118,6 +118,13 @@ impl OxiTarql {
         }
 
         let mut row = 0;
+        // Track first output, to only emit prefixes once to Turtle
+        let mut first_time = true;
+        let output_format = if self.ntriples {
+            RdfFormat::NTriples
+        } else {
+            RdfFormat::Turtle
+        };
         for result in rdr.records() {
             // The iterator yields Result<StringRecord, Error>, so we check the
             // error here.
@@ -146,7 +153,9 @@ impl OxiTarql {
                 let results = prepared.execute(&empty_store);
                 if let QueryResults::Graph(triples) = results.unwrap() {
                     for triple in triples {
-                        if self.dedup > 0 {
+                        // When emitting Turtle, do it only once per row, to
+                        // increase reuse and decrease the overhead to remove prefixes
+                        if self.dedup > 0 || !self.ntriples {
                             store.insert(triple?);
                         } else {
                             let _ = writeln!(out_writer, "{} .", triple?);
@@ -156,8 +165,18 @@ impl OxiTarql {
             }
 
             // If deduplicating and hit limit, flush store to output
-            if self.dedup > 0 && store.len() >= self.dedup.try_into().unwrap() {
-                flush_store(&mut store, &mut out_writer)?;
+            // For Turtle, flush every row unless dedup is specified
+            if !self.ntriples && self.dedup == 0 && !store.is_empty()
+                || self.dedup > 0 && store.len() >= self.dedup.try_into().unwrap()
+            {
+                flush_store(
+                    &mut store,
+                    &mut out_writer,
+                    output_format,
+                    &prefixes,
+                    first_time,
+                )?;
+                first_time = false;
             }
 
             row += 1;
@@ -168,7 +187,13 @@ impl OxiTarql {
 
         // If deduplicating, flush remaining store to output
         if self.dedup > 0 && !store.is_empty() {
-            flush_store(&mut store, &mut out_writer)?;
+            flush_store(
+                &mut store,
+                &mut out_writer,
+                output_format,
+                &prefixes,
+                first_time,
+            )?;
         }
 
         out_writer.flush().expect("Error flushing to output file");
@@ -205,12 +230,42 @@ impl OxiTarql {
 fn flush_store(
     store: &mut HashSet<Triple>,
     out_writer: &mut BufWriter<Box<dyn Write + 'static>>,
+    format: RdfFormat,
+    prefixes: &HashMap<String, String>,
+    first_time: bool,
 ) -> Result<(), Box<dyn Error + 'static>> {
-    let mut serializer = RdfSerializer::from_format(RdfFormat::NTriples).for_writer(Vec::new());
-    for triple in store.iter() {
-        serializer.serialize_triple(triple)?;
+    let mut config = RdfSerializer::from_format(format);
+    if format == RdfFormat::Turtle {
+        for (prefix, iri) in prefixes {
+            config = config.with_prefix(prefix, iri).expect("Invalid prefix IRI");
+        }
     }
-    let rdf_str = serializer.finish().unwrap();
+    let mut serializer = config.for_writer(Vec::new());
+    if format == RdfFormat::Turtle {
+        let mut sorted: Vec<_> = store.iter().collect();
+        sorted.sort_by_key(|t| {
+            (
+                t.subject.to_string(),
+                t.predicate.to_string(),
+                t.object.to_string(),
+            )
+        });
+        for triple in sorted.iter() {
+            serializer.serialize_triple(*triple)?;
+        }
+    } else {
+        for triple in store.iter() {
+            serializer.serialize_triple(triple)?;
+        }
+    }
+    let mut rdf_str = serializer.finish().unwrap();
+    if !first_time {
+        // Remove all leading prefix lines. Safe to do this because
+        // we are guaranteed a non-empty store
+        while rdf_str.get(0..7).unwrap() == b"@prefix" {
+            rdf_str = rdf_str.split_off(rdf_str.iter().position(|c| *c == b'\n').unwrap() + 1);
+        }
+    }
     let _ = out_writer.write_all(&rdf_str);
     store.clear();
     Ok(())
@@ -341,21 +396,6 @@ where
                 .help("Emit N-Triples [default: turtle]"),
         )
         .arg(
-            Arg::new("quads")
-                .long("quads")
-                .requires("name")
-                .action(ArgAction::SetTrue)
-                .help("Output quads (trig). Use --name for graph URI"),
-        )
-        .group(ArgGroup::new("types").args(["ntriples", "quads"]))
-        .arg(
-            Arg::new("name")
-                .long("name")
-                .action(ArgAction::Set)
-                .default_value("")
-                .help("Named graph URI "),
-        )
-        .arg(
             Arg::new("test")
                 .long("test")
                 .value_parser(value_parser!(u32).range(1..50))
@@ -443,13 +483,11 @@ where
         quote_char: matches.get_one::<String>("quote_char").unwrap().to_string(),
         normalize: matches.get_flag("normalize"),
         gzip: matches.get_flag("gzip"),
-        quads: matches.get_flag("quads"),
         ntriples: matches.get_flag("ntriples"),
         dedup: match matches.get_one::<u32>("dedup") {
             None => 0,
             Some(t) => *t,
         },
-        named_graph: matches.get_one::<String>("name").unwrap().to_string(),
         input: matches.get_one::<String>("input").unwrap().to_string(),
         output: matches.get_one::<String>("output").unwrap().to_string(),
         query: matches.get_one::<String>("query").unwrap().to_string(),
@@ -729,7 +767,7 @@ mod tests {
     }
 
     #[test]
-    fn test_flush_store() {
+    fn test_flush_store_ntriples() {
         use std::io::Cursor;
 
         let mut store = HashSet::new();
@@ -750,7 +788,13 @@ mod tests {
         let cursor = Cursor::new(buffer);
         let mut writer = BufWriter::new(Box::new(cursor) as Box<dyn Write>);
 
-        let result = flush_store(&mut store, &mut writer);
+        let result = flush_store(
+            &mut store,
+            &mut writer,
+            RdfFormat::NTriples,
+            &HashMap::new(),
+            true,
+        );
         assert!(result.is_ok());
         assert_eq!(store.len(), 0); // Store should be cleared
     }

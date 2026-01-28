@@ -39,6 +39,7 @@ fn test_integration_split_with_custom_functions() {
         "--output".to_string(),
         temp_file.to_str().unwrap().to_string(),
         "-H".to_string(), // no-header-row flag
+        "--ntriples".to_string(),
         "--split".to_string(),
         "d".to_string(),
         "d_s".to_string(),
@@ -87,6 +88,75 @@ fn test_integration_split_with_custom_functions() {
 }
 
 #[test]
+fn test_integration_turtle_serialization() {
+    // Create a temporary file for output
+    let temp_file = std::env::temp_dir().join("oxi_tarql_test_output.ttl");
+
+    // Clean up any existing temp file
+    let _ = std::fs::remove_file(&temp_file);
+
+    // Get absolute paths for input files
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let input_path = manifest_dir.join("tests/fixtures/split.csv");
+    let query_path = manifest_dir.join("tests/fixtures/splitfuncs.rq");
+
+    // Verify test files exist
+    assert!(
+        input_path.exists(),
+        "Input file should exist: {:?}",
+        input_path
+    );
+    assert!(
+        query_path.exists(),
+        "Query file should exist: {:?}",
+        query_path
+    );
+
+    // Build command-line arguments for configure_transform
+    let args = vec![
+        "oxi_tarql".to_string(),
+        "--input".to_string(),
+        input_path.to_str().unwrap().to_string(),
+        "--query".to_string(),
+        query_path.to_str().unwrap().to_string(),
+        "--output".to_string(),
+        temp_file.to_str().unwrap().to_string(),
+        "-H".to_string(), // no-header-row flag
+        "--split".to_string(),
+        "d".to_string(),
+        "d_s".to_string(),
+        ";".to_string(),
+        "--split".to_string(),
+        "e".to_string(),
+        "e_s".to_string(),
+        " ".to_string(),
+    ];
+
+    let mut tarql = configure_transform(args);
+
+    // Run the transformation
+    let result = tarql.transform();
+    assert!(
+        result.is_ok(),
+        "Transform should succeed: {:?}",
+        result.err()
+    );
+
+    // Read the output file and count triples
+    assert!(
+        temp_file.exists(),
+        "Output file should exist at {:?}",
+        temp_file
+    );
+    let content = fs::read_to_string(&temp_file).expect("Should read output file");
+
+    // Prefixes should be emitted only once
+    assert!(content.matches("@prefix").count() == 3);
+    // Validate subject sort
+    assert!(content.find(":0 a :Item").unwrap() < content.find(":1 a :Item").unwrap());
+}
+
+#[test]
 fn test_integration_with_dedup_and_gzip() {
     // Get paths to test files
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -118,6 +188,7 @@ fn test_integration_with_dedup_and_gzip() {
         query_path.to_str().unwrap().to_string(),
         "--output".to_string(),
         temp_file.to_str().unwrap().to_string(),
+        "--ntriples".to_string(),
         "--gzip".to_string(),
         "--dedup=1000".to_string(),
     ];
