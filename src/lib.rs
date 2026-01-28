@@ -180,12 +180,8 @@ impl OxiTarql {
         record: &'a csv::StringRecord,
         headers: &'a [String],
     ) -> Vec<Vec<(String, &'a str)>> {
-        let mut bindings: Vec<Vec<(String, &'a str)>> = vec![
-            headers
-                .iter().cloned()
-                .zip(record.iter())
-                .collect(),
-        ];
+        let mut bindings: Vec<Vec<(String, &'a str)>> =
+            vec![headers.iter().cloned().zip(record.iter()).collect()];
         for (original, split, delimiter) in self.split.iter() {
             let original_idx = match headers.iter().position(|h| h == original) {
                 None => continue,
