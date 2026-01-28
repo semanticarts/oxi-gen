@@ -153,7 +153,7 @@ impl OxiTarql {
                         if self.dedup > 0 {
                             store.insert(triple?);
                         } else {
-                            let _ = writeln!(out_writer, "{}", triple?);
+                            let _ = writeln!(out_writer, "{} .", triple?);
                         }
                     }
                 }
