@@ -2,10 +2,10 @@ use std::{error::Error, fs};
 
 use oxigraph::model::*;
 use oxigraph::sparql::QueryResults;
+use oxrdfio::{RdfFormat, RdfSerializer};
 use regex::Regex;
 use spareval::QueryEvaluator;
 use spargebra::SparqlParser;
-use oxrdfio::{RdfFormat, RdfSerializer};
 
 use csv::ReaderBuilder;
 use flate2::Compression;
@@ -35,18 +35,19 @@ pub struct OxiTarql {
     pub input: String,
     pub output: String,
     pub query: String,
-    pub split: Vec<(String, String, String)>
+    pub split: Vec<(String, String, String)>,
 }
 
 impl OxiTarql {
     pub fn transform(&mut self) -> Result<(), Box<dyn Error>> {
         let empty_store = Dataset::new();
         let mut store = HashSet::<Triple>::new();
-        
+
         let query_str = fs::read_to_string(&self.query).unwrap();
         let query = match SparqlParser::new()
             .with_prefix("tarql", "https://semanticarts.com/tarql/")?
-            .parse_query(&query_str) {
+            .parse_query(&query_str)
+        {
             Ok(qr) => qr,
             Err(e) => {
                 eprintln!("SPARQL Syntax Error in query: {:?}", e);
@@ -73,22 +74,14 @@ impl OxiTarql {
         let prefixes = extract_prefixes(&query_str).to_owned();
         let p2 = prefixes.clone();
         let evaluator = QueryEvaluator::new()
-                .with_custom_function(
-                    NamedNode::new("https://semanticarts.com/tarql/expandPrefix")?,
-                    move |args| {
-                        args.first()
-                            .map(|p| expand_prefix(&prefixes, p)
-                            .unwrap())
-                    }
-                )
-                .with_custom_function(
-                    NamedNode::new("https://semanticarts.com/tarql/expandPrefixedName")?,
-                    move |args| {
-                        args.first()
-                            .map(|p| expand_prefixed_name(&p2, p)
-                            .unwrap())
-                    }
-                );
+            .with_custom_function(
+                NamedNode::new("https://semanticarts.com/tarql/expandPrefix")?,
+                move |args| args.first().map(|p| expand_prefix(&prefixes, p).unwrap()),
+            )
+            .with_custom_function(
+                NamedNode::new("https://semanticarts.com/tarql/expandPrefixedName")?,
+                move |args| args.first().map(|p| expand_prefixed_name(&p2, p).unwrap()),
+            );
         // oxigraph does not allow for specifying variable substitution unless
         // the variable is referenced in the query. Extract anything that looks like
         // a variable identifier, and then filter out columns that are not used
@@ -98,9 +91,9 @@ impl OxiTarql {
         let file = BufReader::with_capacity(100000, File::open(&self.input)?);
         let mut rdr = ReaderBuilder::new()
             .has_headers(self.headers)
-            .delimiter(match self.tab{
+            .delimiter(match self.tab {
                 true => b'\t',
-                _ => self.delimiter.chars().next().unwrap() as u8
+                _ => self.delimiter.chars().next().unwrap() as u8,
             })
             .quote(self.quote_char.chars().next().unwrap() as u8)
             .escape(Some(self.escape_char.chars().next().unwrap() as u8))
@@ -141,12 +134,13 @@ impl OxiTarql {
                 let mut prepared = evaluator.prepare(&query);
                 for (varname, value) in unwrapped_row {
                     if query_vars.contains(&varname) {
-                        prepared =
-                            prepared.substitute_variable(Variable::new(varname)?, Literal::from(value));
+                        prepared = prepared
+                            .substitute_variable(Variable::new(varname)?, Literal::from(value));
                     }
                 }
                 if query_vars.contains("ROWNUM") {
-                    prepared = prepared.substitute_variable(Variable::new("ROWNUM")?, Literal::from(row));
+                    prepared =
+                        prepared.substitute_variable(Variable::new("ROWNUM")?, Literal::from(row));
                 }
 
                 let results = prepared.execute(&empty_store);
@@ -173,7 +167,7 @@ impl OxiTarql {
         }
 
         // If deduplicating, flush remaining store to output
-        if self.dedup > 0 && store.len() > 0 {
+        if self.dedup > 0 && !store.is_empty() {
             flush_store(&mut store, &mut out_writer)?;
         }
 
@@ -181,13 +175,21 @@ impl OxiTarql {
         Ok(())
     }
 
-    fn apply_split<'a>(&self, record: &'a csv::StringRecord, headers: &'a Vec<String>) -> Vec<Vec<(String, &'a str)>> {
-        let mut bindings: Vec<Vec<(String, &'a str)>> = 
-            vec![headers.iter().map(|h| h.clone()).zip(record.iter()).collect()];
+    fn apply_split<'a>(
+        &self,
+        record: &'a csv::StringRecord,
+        headers: &'a [String],
+    ) -> Vec<Vec<(String, &'a str)>> {
+        let mut bindings: Vec<Vec<(String, &'a str)>> = vec![
+            headers
+                .iter().cloned()
+                .zip(record.iter())
+                .collect(),
+        ];
         for (original, split, delimiter) in self.split.iter() {
             let original_idx = match headers.iter().position(|h| h == original) {
                 None => continue,
-                Some(idx) => idx
+                Some(idx) => idx,
             };
             let mut next_vals: Vec<Vec<(String, &str)>> = vec![];
             for val_set in bindings {
@@ -202,10 +204,12 @@ impl OxiTarql {
         }
         bindings
     }
-
 }
 
-fn flush_store(store: &mut HashSet<Triple>, out_writer: &mut BufWriter<Box<dyn Write + 'static>>) -> Result<(), Box<dyn Error + 'static>> {
+fn flush_store(
+    store: &mut HashSet<Triple>,
+    out_writer: &mut BufWriter<Box<dyn Write + 'static>>,
+) -> Result<(), Box<dyn Error + 'static>> {
     let mut serializer = RdfSerializer::from_format(RdfFormat::NTriples).for_writer(Vec::new());
     for triple in store.iter() {
         serializer.serialize_triple(triple)?;
@@ -224,7 +228,9 @@ fn expand_prefix(prefixes: &HashMap<String, String>, prefix: &Term) -> Option<Te
             exit(-1);
         }
     };
-    prefixes.get(&prefix_name).map(|iri| Term::Literal(Literal::from(iri.to_string())))
+    prefixes
+        .get(&prefix_name)
+        .map(|iri| Term::Literal(Literal::from(iri.to_string())))
 }
 
 fn expand_prefixed_name(prefixes: &HashMap<String, String>, qname: &Term) -> Option<Term> {
@@ -239,14 +245,12 @@ fn expand_prefixed_name(prefixes: &HashMap<String, String>, qname: &Term) -> Opt
         Some(offset) => offset,
         _ => {
             eprintln!("Malformed QName in expandPrefixedName: {:?}", &qname_str);
-            return None
+            return None;
         }
     });
-    prefixes.get(prefix_name)
-        .map(|pref_iri| Term::NamedNode(
-            NamedNode::new(pref_iri.to_string() + rest.get(1..).unwrap()).unwrap()
-        )
-    )
+    prefixes.get(prefix_name).map(|pref_iri| {
+        Term::NamedNode(NamedNode::new(pref_iri.to_string() + rest.get(1..).unwrap()).unwrap())
+    })
 }
 
 fn extract_prefixes(query_text: &str) -> HashMap<String, String> {
@@ -371,7 +375,7 @@ where
                 .action(ArgAction::Append)
                 .num_args(3)
                 .value_names(["ORIGINAL", "SPLIT", "DELIMITER"])
-                .help("Split column ORIGINAL into multiple values in SPLIT on DELIMITER")
+                .help("Split column ORIGINAL into multiple values in SPLIT on DELIMITER"),
         )
         .arg(
             Arg::new("dedup")
@@ -419,7 +423,7 @@ where
     let split_def = match matches.get_many::<String>("split") {
         None => vec![],
         Some(splits) => {
-            let mut sval_it = splits.map(|sd| sd.clone());
+            let mut sval_it = splits.cloned();
             let mut split_defs = Vec::<(String, String, String)>::new();
             while let Some(orig) = sval_it.next() {
                 split_defs.push((orig, sval_it.next().unwrap(), sval_it.next().unwrap()));
@@ -433,7 +437,7 @@ where
         tab: matches.get_flag("tab"),
         test: match matches.get_one::<u32>("test") {
             None => 0,
-            Some(t) => *t
+            Some(t) => *t,
         },
         headers: matches.get_flag("headers"),
         escape_char: matches
@@ -447,13 +451,13 @@ where
         ntriples: matches.get_flag("ntriples"),
         dedup: match matches.get_one::<u32>("dedup") {
             None => 0,
-            Some(t) => *t
+            Some(t) => *t,
         },
         named_graph: matches.get_one::<String>("name").unwrap().to_string(),
         input: matches.get_one::<String>("input").unwrap().to_string(),
         output: matches.get_one::<String>("output").unwrap().to_string(),
         query: matches.get_one::<String>("query").unwrap().to_string(),
-        split: split_def
+        split: split_def,
     }
 }
 
@@ -486,8 +490,14 @@ mod tests {
         "#;
         let prefixes = extract_prefixes(query);
         assert_eq!(prefixes.len(), 2);
-        assert_eq!(prefixes.get("rdf"), Some(&"http://www.w3.org/1999/02/22-rdf-syntax-ns#".to_string()));
-        assert_eq!(prefixes.get("rdfs"), Some(&"http://www.w3.org/2000/01/rdf-schema#".to_string()));
+        assert_eq!(
+            prefixes.get("rdf"),
+            Some(&"http://www.w3.org/1999/02/22-rdf-syntax-ns#".to_string())
+        );
+        assert_eq!(
+            prefixes.get("rdfs"),
+            Some(&"http://www.w3.org/2000/01/rdf-schema#".to_string())
+        );
     }
 
     #[test]
@@ -550,7 +560,10 @@ mod tests {
     #[test]
     fn test_expand_prefix_valid() {
         let mut prefixes = HashMap::new();
-        prefixes.insert("rdf".to_string(), "http://www.w3.org/1999/02/22-rdf-syntax-ns#".to_string());
+        prefixes.insert(
+            "rdf".to_string(),
+            "http://www.w3.org/1999/02/22-rdf-syntax-ns#".to_string(),
+        );
         prefixes.insert("foaf".to_string(), "http://xmlns.com/foaf/0.1/".to_string());
 
         let prefix_term = Term::Literal(Literal::from("rdf"));
@@ -574,7 +587,10 @@ mod tests {
     #[test]
     fn test_expand_prefixed_name_valid() {
         let mut prefixes = HashMap::new();
-        prefixes.insert("rdf".to_string(), "http://www.w3.org/1999/02/22-rdf-syntax-ns#".to_string());
+        prefixes.insert(
+            "rdf".to_string(),
+            "http://www.w3.org/1999/02/22-rdf-syntax-ns#".to_string(),
+        );
         prefixes.insert("foaf".to_string(), "http://xmlns.com/foaf/0.1/".to_string());
 
         let qname = Term::Literal(Literal::from("foaf:name"));
@@ -590,13 +606,19 @@ mod tests {
     #[test]
     fn test_expand_prefixed_name_rdf_type() {
         let mut prefixes = HashMap::new();
-        prefixes.insert("rdf".to_string(), "http://www.w3.org/1999/02/22-rdf-syntax-ns#".to_string());
+        prefixes.insert(
+            "rdf".to_string(),
+            "http://www.w3.org/1999/02/22-rdf-syntax-ns#".to_string(),
+        );
 
         let qname = Term::Literal(Literal::from("rdf:type"));
         let result = expand_prefixed_name(&prefixes, &qname);
         assert!(result.is_some());
         if let Some(Term::NamedNode(node)) = result {
-            assert_eq!(node.as_str(), "http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+            assert_eq!(
+                node.as_str(),
+                "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+            );
         } else {
             panic!("Expected named node term");
         }
@@ -613,7 +635,10 @@ mod tests {
     #[test]
     fn test_expand_prefixed_name_no_colon() {
         let mut prefixes = HashMap::new();
-        prefixes.insert("rdf".to_string(), "http://www.w3.org/1999/02/22-rdf-syntax-ns#".to_string());
+        prefixes.insert(
+            "rdf".to_string(),
+            "http://www.w3.org/1999/02/22-rdf-syntax-ns#".to_string(),
+        );
 
         let qname = Term::Literal(Literal::from("nocolon"));
         let result = expand_prefixed_name(&prefixes, &qname);
@@ -670,7 +695,11 @@ mod tests {
             ],
             ..Default::default()
         };
-        let headers = vec!["name".to_string(), "colors".to_string(), "sizes".to_string()];
+        let headers = vec![
+            "name".to_string(),
+            "colors".to_string(),
+            "sizes".to_string(),
+        ];
         let record = csv::StringRecord::from(vec!["Product", "red,blue", "S;M"]);
 
         let result = tarql.apply_split(&record, &headers);
@@ -687,7 +716,11 @@ mod tests {
     #[test]
     fn test_apply_split_nonexistent_column() {
         let tarql = OxiTarql {
-            split: vec![("nonexistent".to_string(), "split_val".to_string(), ",".to_string())],
+            split: vec![(
+                "nonexistent".to_string(),
+                "split_val".to_string(),
+                ",".to_string(),
+            )],
             ..Default::default()
         };
         let headers = vec!["col1".to_string(), "col2".to_string()];
@@ -725,5 +758,4 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(store.len(), 0); // Store should be cleared
     }
-
 }

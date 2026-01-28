@@ -3,8 +3,9 @@ use std::{env, time::Instant};
 
 fn main() {
     // parse the supplied arguments
-    let os_args: Vec<String> = 
-        env::args_os().into_iter().map(|a| a.into_string().unwrap()).collect();
+    let os_args: Vec<String> = env::args_os()
+        .map(|a| a.into_string().unwrap())
+        .collect();
     let mut tarql = configure_transform(os_args);
 
     let start = Instant::now();
