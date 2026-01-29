@@ -45,7 +45,7 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Run tests and generate coverage
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info --summary-only
+        run: cargo llvm-cov --all-features --workspace --summary-only
 
   lint:
     name: Linting

@@ -8,7 +8,7 @@ on:
 
 jobs:
   tag-version:
-    runs-on: ubuntu-latestq
+    runs-on: ubuntu-latest
 
     steps:
     - name: Checkout repository
