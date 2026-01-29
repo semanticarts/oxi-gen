@@ -19,6 +19,8 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
@@ -41,27 +43,14 @@ jobs:
           path: target
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Build
-        run: cargo build --verbose
-
-      - name: Run tests and generate coverage
-        run: cargo llvm-cov --all-features --workspace --summary-only
-
-  lint:
-    name: Linting
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Run tests and generate coverage
+        run: cargo llvm-cov --all-features --workspace --summary-only
