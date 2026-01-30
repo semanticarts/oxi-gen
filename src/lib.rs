@@ -1,7 +1,7 @@
 use std::{error::Error, fs};
 
-use oxigraph::model::*;
-use oxigraph::sparql::QueryResults;
+use oxrdf::*;
+use spareval::QueryResults;
 use oxrdfio::{RdfFormat, RdfSerializer};
 use regex::Regex;
 use spareval::QueryEvaluator;
