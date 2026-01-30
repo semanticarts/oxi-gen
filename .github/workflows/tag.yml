@@ -6,9 +6,15 @@ on:
     paths:
       - 'Cargo.toml'
 
+permissions:
+  contents: write
+
 jobs:
   tag-version:
     runs-on: ubuntu-latest
+    outputs:
+      prev_version: ${{ steps.get_prev_version.outputs.prev_version }}
+      curr_version: ${{ steps.get_curr_version.outputs.curr_version }}
 
     steps:
     - name: Checkout repository
@@ -40,3 +46,72 @@ jobs:
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git tag "v$VERSION"
         git push origin "v$VERSION"
+
+  build-and-upload:
+    name: Build and upload
+    runs-on: ${{ matrix.os }}
+    needs: tag-vrsion
+    if: needs.tag-version.outputs.prev_version != needs.tag-version.outputs.prev_version
+
+    strategy:
+      matrix:
+        # You can add more, for any target you'd like!
+        include:
+          - build: linux
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+
+          - build: macos
+            os: macos-latest
+            target: x86_64-apple-darwin
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Get the release version from the tag
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Install Rust
+        # Or @nightly if you want
+        uses: dtolnay/rust-toolchain@stable
+        # Arguments to pass in
+        with:
+          # Make Rust compile to our target (defined in the matrix)
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          use-cross: true
+          command: build
+          args: --verbose --release --target ${{ matrix.target }}
+
+      - name: Build archive
+        shell: bash
+        run: |
+          # Replace with the name of your binary
+          binary_name="oxi_tarql"
+
+          dirname="$binary_name-${{ env.VERSION }}-${{ matrix.target }}"
+          mkdir "$dirname"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            mv "target/${{ matrix.target }}/release/$binary_name.exe" "$dirname"
+          else
+            mv "target/${{ matrix.target }}/release/$binary_name" "$dirname"
+          fi
+
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            7z a "$dirname.zip" "$dirname"
+            echo "ASSET=$dirname.zip" >> $GITHUB_ENV
+          else
+            tar -czf "$dirname.tar.gz" "$dirname"
+            echo "ASSET=$dirname.tar.gz" >> $GITHUB_ENV
+          fi
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ${{ env.ASSET }}
