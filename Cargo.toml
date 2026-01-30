@@ -1,13 +1,13 @@
 [package]
 name = "oxi_tarql"
-version = "0.1.2"
+version = "0.1.5"
 edition = "2024"
 
 [dependencies]
 clap = { version = "4.5.54", features = ["cargo"] }
 csv = "1.4.0"
 flate2 = "1.1.8"
-oxigraph = "0.5.3"
+oxrdf = "0.3.2"
 oxrdfio = "0.2.2"
 regex = "1.12.2"
 spareval = "0.2.3"
