@@ -50,7 +50,7 @@ jobs:
   build-and-upload:
     name: Build and upload
     runs-on: ${{ matrix.os }}
-    needs: tag-vrsion
+    needs: tag-version
     if: needs.tag-version.outputs.prev_version != needs.tag-version.outputs.prev_version
 
     strategy:
