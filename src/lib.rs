@@ -1,10 +1,10 @@
 use std::{error::Error, fs};
 
 use oxrdf::*;
-use spareval::QueryResults;
 use oxrdfio::{RdfFormat, RdfSerializer};
 use regex::Regex;
 use spareval::QueryEvaluator;
+use spareval::QueryResults;
 use spargebra::SparqlParser;
 
 use csv::ReaderBuilder;
