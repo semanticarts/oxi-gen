@@ -8,13 +8,12 @@ async-channel = "2.5.0"
 clap = { version = "4.5.54", features = ["cargo"] }
 csv = "1.4.0"
 flate2 = "1.1.8"
+num_cpus = "1.17.0"
 oxrdf = "0.3.2"
 oxrdfio = "0.2.2"
-performance_measure = "2.0.0"
 regex = "1.12.2"
 spareval = "0.2.3"
 spargebra = "0.4.3"
-tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread"] }
 
 [profile.release]
 lto ="fat"

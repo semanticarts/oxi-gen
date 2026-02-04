@@ -2,12 +2,10 @@ use std::{error::Error, fs};
 
 use std::sync::mpsc;
 use std::thread;
-
-use async_channel::{bounded, unbounded};
+use std::sync::mpsc::sync_channel;
 
 use oxrdf::*;
 use oxrdfio::{RdfFormat, RdfSerializer};
-use performance_measure::performance_measure::Measurer;
 use regex::Regex;
 use spareval::QueryEvaluator;
 use spareval::QueryResults;
@@ -43,8 +41,15 @@ pub struct OxiTarql {
 }
 
 impl OxiTarql {
-    pub async fn transform(&mut self) -> Result<(), Box<dyn Error>> {
-        let (csv_tx, csv_rx) = unbounded();
+    pub fn transform(&mut self) -> Result<(), Box<dyn Error>> {
+        let num_workers: usize = num_cpus::get();
+
+        let mut csv_senders = vec![];
+        let mut csv_receivers = vec![];
+        for (sender, receiver ) in (0..num_workers).map(|_| sync_channel(100)) {
+            csv_senders.push(sender);
+            csv_receivers.push(receiver);
+        }
         let (triple_tx, triple_rx) = mpsc::channel();
 
         let query_str = fs::read_to_string(&self.query).unwrap();
@@ -65,13 +70,10 @@ impl OxiTarql {
         // a variable identifier, and then filter out columns that are not used
         let query_vars = extract_variables(&query_str);
 
-        // let mut measurer = Measurer::new(None);
-        const SIZE: usize = 3;
-
-        let mut transformers = Vec::with_capacity(SIZE);
-        for tid in 0..SIZE {
-            let csv_rx = csv_rx.clone();
+        let mut transformers = Vec::with_capacity(num_workers);
+        for tid in 0..num_workers {
             let triple_tx = triple_tx.clone();
+            let receiver = csv_receivers.pop().unwrap();
             // Each captured context gets its own copy of the prefixes
             let p1 = prefixes.clone();
             let p2 = prefixes.clone();
@@ -86,11 +88,11 @@ impl OxiTarql {
                 );
             let query = query.clone();
             let query_vars = query_vars.clone();
-            transformers.push(thread::spawn(async move || {
+            transformers.push(thread::spawn(move || {
                 let mut processed = 0;
-                eprintln!("Transformer {} started", tid);
+                // eprintln!("Transformer {} started", tid);
                 let empty_store = Dataset::new();
-                while let Ok((row, unwrapped)) = csv_rx.recv().await {
+                while let Ok((row, unwrapped)) = receiver.recv() {
                     // eprintln!("Received {}: {:?}", row, &unwrapped);
                     let mut row_triples: Vec<Triple> = vec![];
                     for unwrapped_row in unwrapped {
@@ -115,13 +117,14 @@ impl OxiTarql {
                     // eprintln!("Sending {}: {:?}", row, &row_triples);
                     triple_tx.send((row, row_triples)).unwrap();
                     processed += 1;
-                    if processed % 5000 == 0 {
-                        eprintln!("Transformer {tid} processed {processed} rows");
+                    if processed % 50000 == 0 {
+                        // eprintln!("Transformer {tid} processed {processed} rows");
                     }
                 }
                 drop(triple_tx);
+                // eprintln!("Transformer {tid} finished {processed} rows");
             }));
-            eprintln!("Transformer {tid} spawned");
+            // eprintln!("Transformer {tid} spawned");
         }
 
         let output_path = self.output.clone();
@@ -133,8 +136,8 @@ impl OxiTarql {
         };
         let dedup = self.dedup;
         let test_rows = self.test;
-        let writer_task = thread::spawn(async move || {
-            eprintln!("Writer started");
+        let writer_task = thread::spawn(move || {
+            // eprintln!("Writer started");
             // Open the output file. Will use the filename if given or STDOUT if not
             let mut out_writer: BufWriter<Box<dyn Write>> =
                 BufWriter::new(match output_path.as_ref() {
@@ -160,7 +163,6 @@ impl OxiTarql {
                 store.extend(row_triples);
                 if dedup == 0 || store.len() >= dedup.try_into().unwrap()
                 {
-                    // measurer.start_measure_named("write");
                     flush_store(
                         &mut store,
                         &mut out_writer,
@@ -169,7 +171,6 @@ impl OxiTarql {
                         first_time,
                     ).unwrap();
                     first_time = false;
-                    // measurer.stop_measure_replace_old_named("write");
                 }
 
                 if test_rows != 0 && row == test_rows {
@@ -179,7 +180,6 @@ impl OxiTarql {
 
             // If deduplicating, flush remaining store to output
             if dedup > 0 && !store.is_empty() {
-                // measurer.start_measure_named("write");
                 flush_store(
                     &mut store,
                     &mut out_writer,
@@ -187,11 +187,10 @@ impl OxiTarql {
                     &prefixes,
                     first_time,
                 ).unwrap();
-                // measurer.stop_measure_replace_old_named("write");
             }
             out_writer.flush().expect("Error flushing to output file");
         });
-        eprintln!("Writer spawned");
+        // eprintln!("Writer spawned");
 
         // Create CSV reader based on command line options
         let file = BufReader::with_capacity(100000, File::open(&self.input).unwrap());
@@ -208,8 +207,8 @@ impl OxiTarql {
         let has_headers = self.headers;
         let split = self.split.clone();
 
-        let reader_task = thread::spawn(async move || {
-            eprintln!("Reader started");
+        let reader_task = thread::spawn(move || {
+            // eprintln!("Reader started");
             // Extract headers from the CSV, unless --no-header-row is used, in
             // which case columns are aliased to 'a'..'z', 'A'..'Z' (max 52 columns)
             let mut headers = Vec::new();
@@ -229,6 +228,7 @@ impl OxiTarql {
             }
             // let should_pass: Vec<bool> = headers.iter().map(|h| query_vars.contains(h)).collect();
             let mut row = 0;
+            let mut transformer = 0;
             for result in rdr.records() {
                 // The iterator yields Result<StringRecord, Error>, so we check the
                 // error here.
@@ -242,26 +242,26 @@ impl OxiTarql {
 
                 let unwrapped = apply_split(&split, &record, &headers);
                 // eprintln!("Sending {:?}", &unwrapped);
-                csv_tx.send((row, unwrapped)).await.unwrap();
+                csv_senders[transformer].send((row, unwrapped)).unwrap();
+                transformer = (transformer + 1) % num_workers;
                 row += 1;
-                if row % 10000 == 0 {
-                    eprintln!("Sent {row} rows");
+                if row % 50000 == 0 {
+                    // eprintln!("Sent {row} rows");
                 }
             }
-            csv_tx.close();
+            for channel in csv_senders {
+                drop(channel);
+            }
         });
-        eprintln!("Reader spawned");
+        // eprintln!("Reader spawned");
 
-        reader_task.join().unwrap().await;
+        reader_task.join().unwrap();
         for t in transformers {
-            t.join().unwrap().await;
+            t.join().unwrap();
         }
         drop(triple_tx);
-        writer_task.join().unwrap().await;
+        writer_task.join().unwrap();
 
-        // eprintln!("Avg time for transform {:?}", measurer.get_average_named("transform"));
-        // eprintln!("Avg time for execute {:?}", measurer.get_average_named("execute"));
-        // eprintln!("Avg time for write {:?}", measurer.get_average_named("write"));
         Ok(())
     }
 
@@ -325,7 +325,7 @@ fn flush_store(
         }
     }
     let mut rdf_str = serializer.finish().unwrap();
-    if !first_time {
+    if !first_time && format == RdfFormat::Turtle {
         // Remove all leading prefix lines. Safe to do this because
         // we are guaranteed a non-empty store
         while rdf_str.get(0..7).unwrap() == b"@prefix" {
