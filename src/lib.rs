@@ -1,7 +1,13 @@
 use std::{error::Error, fs};
 
+use std::sync::mpsc;
+use std::thread;
+
+use async_channel::{bounded, unbounded};
+
 use oxrdf::*;
 use oxrdfio::{RdfFormat, RdfSerializer};
+use performance_measure::performance_measure::Measurer;
 use regex::Regex;
 use spareval::QueryEvaluator;
 use spareval::QueryResults;
@@ -37,9 +43,9 @@ pub struct OxiTarql {
 }
 
 impl OxiTarql {
-    pub fn transform(&mut self) -> Result<(), Box<dyn Error>> {
-        let empty_store = Dataset::new();
-        let mut store = HashSet::<Triple>::new();
+    pub async fn transform(&mut self) -> Result<(), Box<dyn Error>> {
+        let (csv_tx, csv_rx) = unbounded();
+        let (triple_tx, triple_rx) = mpsc::channel();
 
         let query_str = fs::read_to_string(&self.query).unwrap();
         let query = match SparqlParser::new()
@@ -53,42 +59,142 @@ impl OxiTarql {
             }
         };
 
-        // Open the output file. Will use the filename if given or STDOUT if not
-        let mut out_writer: BufWriter<Box<dyn Write>> =
-            BufWriter::new(match self.output.as_ref() {
-                "STDOUT" => Box::new(stdout()) as Box<dyn Write>,
-                _ => {
-                    if self.gzip {
-                        let out_fh = File::create(&self.output)?;
-                        let out_gz = GzEncoder::new(out_fh, Compression::default());
-                        Box::new(BufWriter::new(out_gz))
-                    } else {
-                        let out_fh = File::create(&self.output)?;
-                        Box::new(BufWriter::new(out_fh))
-                    }
-                }
-            });
-
         let prefixes = extract_prefixes(&query_str).to_owned();
-        // Each captured context gets its own copy of the prefixes
-        let p1 = prefixes.clone();
-        let p2 = prefixes.clone();
-        let evaluator = QueryEvaluator::new()
-            .with_custom_function(
-                NamedNode::new("https://semanticarts.com/tarql/expandPrefix")?,
-                move |args| args.first().map(|p| expand_prefix(&p1, p).unwrap()),
-            )
-            .with_custom_function(
-                NamedNode::new("https://semanticarts.com/tarql/expandPrefixedName")?,
-                move |args| args.first().map(|p| expand_prefixed_name(&p2, p).unwrap()),
-            );
         // oxigraph does not allow for specifying variable substitution unless
         // the variable is referenced in the query. Extract anything that looks like
         // a variable identifier, and then filter out columns that are not used
         let query_vars = extract_variables(&query_str);
 
+        // let mut measurer = Measurer::new(None);
+        const SIZE: usize = 3;
+
+        let mut transformers = Vec::with_capacity(SIZE);
+        for tid in 0..SIZE {
+            let csv_rx = csv_rx.clone();
+            let triple_tx = triple_tx.clone();
+            // Each captured context gets its own copy of the prefixes
+            let p1 = prefixes.clone();
+            let p2 = prefixes.clone();
+            let evaluator = QueryEvaluator::new()
+                .with_custom_function(
+                    NamedNode::new("https://semanticarts.com/tarql/expandPrefix")?,
+                    move |args| args.first().map(|p| expand_prefix(&p1, p).unwrap()),
+                )
+                .with_custom_function(
+                    NamedNode::new("https://semanticarts.com/tarql/expandPrefixedName")?,
+                    move |args| args.first().map(|p| expand_prefixed_name(&p2, p).unwrap()),
+                );
+            let query = query.clone();
+            let query_vars = query_vars.clone();
+            transformers.push(thread::spawn(async move || {
+                let mut processed = 0;
+                eprintln!("Transformer {} started", tid);
+                let empty_store = Dataset::new();
+                while let Ok((row, unwrapped)) = csv_rx.recv().await {
+                    // eprintln!("Received {}: {:?}", row, &unwrapped);
+                    let mut row_triples: Vec<Triple> = vec![];
+                    for unwrapped_row in unwrapped {
+                        let mut prepared = evaluator.prepare(&query);
+                        for (varname, value) in unwrapped_row {
+                            if query_vars.contains(&varname) {
+                                prepared = prepared
+                                    .substitute_variable(Variable::new(varname).unwrap(), Literal::from(value));
+                            }
+                        }
+                        if query_vars.contains("ROWNUM") {
+                            prepared =
+                                prepared.substitute_variable(Variable::new("ROWNUM").unwrap(), Literal::from(row));
+                        }
+
+                        let results = prepared.execute(&empty_store);
+                        if let QueryResults::Graph(triples) = results.unwrap() {
+                            row_triples.extend(triples.into_iter().map(|t| t.unwrap()));
+                            // store.extend(triples.into_iter().map(|t| t.unwrap()));
+                        }
+                    }
+                    // eprintln!("Sending {}: {:?}", row, &row_triples);
+                    triple_tx.send((row, row_triples)).unwrap();
+                    processed += 1;
+                    if processed % 5000 == 0 {
+                        eprintln!("Transformer {tid} processed {processed} rows");
+                    }
+                }
+                drop(triple_tx);
+            }));
+            eprintln!("Transformer {tid} spawned");
+        }
+
+        let output_path = self.output.clone();
+        let compress = self.gzip;
+        let output_format = if self.ntriples {
+            RdfFormat::NTriples
+        } else {
+            RdfFormat::Turtle
+        };
+        let dedup = self.dedup;
+        let test_rows = self.test;
+        let writer_task = thread::spawn(async move || {
+            eprintln!("Writer started");
+            // Open the output file. Will use the filename if given or STDOUT if not
+            let mut out_writer: BufWriter<Box<dyn Write>> =
+                BufWriter::new(match output_path.as_ref() {
+                    "STDOUT" => Box::new(stdout()) as Box<dyn Write>,
+                    _ => {
+                        if compress {
+                            let out_fh = File::create(&output_path).unwrap();
+                            let out_gz = GzEncoder::new(out_fh, Compression::default());
+                            Box::new(BufWriter::new(out_gz))
+                        } else {
+                            let out_fh = File::create(&output_path).unwrap();
+                            Box::new(BufWriter::new(out_fh))
+                        }
+                    }
+                });
+            
+            // Track first output, to only emit prefixes once to Turtle
+            let mut first_time = true;
+            let mut store = HashSet::<Triple>::new();
+
+            while let Ok((row, row_triples)) = triple_rx.recv() {
+                // eprintln!("Received {}: {:?}", row, &row_triples);
+                store.extend(row_triples);
+                if dedup == 0 || store.len() >= dedup.try_into().unwrap()
+                {
+                    // measurer.start_measure_named("write");
+                    flush_store(
+                        &mut store,
+                        &mut out_writer,
+                        output_format,
+                        &prefixes,
+                        first_time,
+                    ).unwrap();
+                    first_time = false;
+                    // measurer.stop_measure_replace_old_named("write");
+                }
+
+                if test_rows != 0 && row == test_rows {
+                    break;
+                }
+            }
+
+            // If deduplicating, flush remaining store to output
+            if dedup > 0 && !store.is_empty() {
+                // measurer.start_measure_named("write");
+                flush_store(
+                    &mut store,
+                    &mut out_writer,
+                    output_format,
+                    &prefixes,
+                    first_time,
+                ).unwrap();
+                // measurer.stop_measure_replace_old_named("write");
+            }
+            out_writer.flush().expect("Error flushing to output file");
+        });
+        eprintln!("Writer spawned");
+
         // Create CSV reader based on command line options
-        let file = BufReader::with_capacity(100000, File::open(&self.input)?);
+        let file = BufReader::with_capacity(100000, File::open(&self.input).unwrap());
         let mut rdr = ReaderBuilder::new()
             .has_headers(self.headers)
             .delimiter(match self.tab {
@@ -98,133 +204,93 @@ impl OxiTarql {
             .quote(self.quote_char.chars().next().unwrap() as u8)
             .escape(Some(self.escape_char.chars().next().unwrap() as u8))
             .from_reader(file);
+        let normalize = self.normalize;
+        let has_headers = self.headers;
+        let split = self.split.clone();
 
-        // Extract headers from the CSV, unless --no-header-row is used, in
-        // which case columns are aliased to 'a'..'z', 'A'..'Z' (max 52 columns)
-        let mut headers = Vec::new();
-        if self.headers {
-            let header = rdr.headers()?.clone();
+        let reader_task = thread::spawn(async move || {
+            eprintln!("Reader started");
+            // Extract headers from the CSV, unless --no-header-row is used, in
+            // which case columns are aliased to 'a'..'z', 'A'..'Z' (max 52 columns)
+            let mut headers = Vec::new();
+            if has_headers {
+                let header = rdr.headers().unwrap().clone();
 
-            for field in &header {
-                headers.push(clean_column(field, &self.normalize).to_string());
-            }
-        } else {
-            let alphabet_column_names: Vec<String> = ('a'..='z')
-                .chain('A'..='Z')
-                .map(|c| c.to_string())
-                .collect();
-
-            headers = alphabet_column_names.clone();
-        }
-
-        let mut row = 0;
-        // Track first output, to only emit prefixes once to Turtle
-        let mut first_time = true;
-        let output_format = if self.ntriples {
-            RdfFormat::NTriples
-        } else {
-            RdfFormat::Turtle
-        };
-        for result in rdr.records() {
-            // The iterator yields Result<StringRecord, Error>, so we check the
-            // error here.
-            let record = match result {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("Error reading row {}: {:?}", row, e);
-                    exit(-1);
+                for field in &header {
+                    headers.push(clean_column(field, &normalize).to_string());
                 }
-            };
+            } else {
+                let alphabet_column_names: Vec<String> = ('a'..='z')
+                    .chain('A'..='Z')
+                    .map(|c| c.to_string())
+                    .collect();
 
-            let unwrapped = self.apply_split(&record, &headers);
-            for unwrapped_row in unwrapped {
-                let mut prepared = evaluator.prepare(&query);
-                for (varname, value) in unwrapped_row {
-                    if query_vars.contains(&varname) {
-                        prepared = prepared
-                            .substitute_variable(Variable::new(varname)?, Literal::from(value));
+                headers = alphabet_column_names.clone();
+            }
+            // let should_pass: Vec<bool> = headers.iter().map(|h| query_vars.contains(h)).collect();
+            let mut row = 0;
+            for result in rdr.records() {
+                // The iterator yields Result<StringRecord, Error>, so we check the
+                // error here.
+                let record: Vec<String> = match result {
+                    Ok(r) => r.iter().map(|s| s.to_string()).collect(),
+                    Err(e) => {
+                        eprintln!("Error reading row {}: {:?}", row, e);
+                        exit(-1);
                     }
-                }
-                if query_vars.contains("ROWNUM") {
-                    prepared =
-                        prepared.substitute_variable(Variable::new("ROWNUM")?, Literal::from(row));
-                }
+                };
 
-                let results = prepared.execute(&empty_store);
-                if let QueryResults::Graph(triples) = results.unwrap() {
-                    for triple in triples {
-                        // When emitting Turtle, do it only once per row, to
-                        // increase reuse and decrease the overhead to remove prefixes
-                        if self.dedup > 0 || !self.ntriples {
-                            store.insert(triple?);
-                        } else {
-                            let _ = writeln!(out_writer, "{} .", triple?);
-                        }
-                    }
+                let unwrapped = apply_split(&split, &record, &headers);
+                // eprintln!("Sending {:?}", &unwrapped);
+                csv_tx.send((row, unwrapped)).await.unwrap();
+                row += 1;
+                if row % 10000 == 0 {
+                    eprintln!("Sent {row} rows");
                 }
             }
+            csv_tx.close();
+        });
+        eprintln!("Reader spawned");
 
-            // If deduplicating and hit limit, flush store to output
-            // For Turtle, flush every row unless dedup is specified
-            if !self.ntriples && self.dedup == 0 && !store.is_empty()
-                || self.dedup > 0 && store.len() >= self.dedup.try_into().unwrap()
-            {
-                flush_store(
-                    &mut store,
-                    &mut out_writer,
-                    output_format,
-                    &prefixes,
-                    first_time,
-                )?;
-                first_time = false;
-            }
-
-            row += 1;
-            if self.test != 0 && row == self.test {
-                break;
-            }
+        reader_task.join().unwrap().await;
+        for t in transformers {
+            t.join().unwrap().await;
         }
+        drop(triple_tx);
+        writer_task.join().unwrap().await;
 
-        // If deduplicating, flush remaining store to output
-        if self.dedup > 0 && !store.is_empty() {
-            flush_store(
-                &mut store,
-                &mut out_writer,
-                output_format,
-                &prefixes,
-                first_time,
-            )?;
-        }
-
-        out_writer.flush().expect("Error flushing to output file");
+        // eprintln!("Avg time for transform {:?}", measurer.get_average_named("transform"));
+        // eprintln!("Avg time for execute {:?}", measurer.get_average_named("execute"));
+        // eprintln!("Avg time for write {:?}", measurer.get_average_named("write"));
         Ok(())
     }
 
-    fn apply_split<'a>(
-        &self,
-        record: &'a csv::StringRecord,
-        headers: &'a [String],
-    ) -> Vec<Vec<(String, &'a str)>> {
-        let mut bindings: Vec<Vec<(String, &'a str)>> =
-            vec![headers.iter().cloned().zip(record.iter()).collect()];
-        for (original, split, delimiter) in self.split.iter() {
-            let original_idx = match headers.iter().position(|h| h == original) {
-                None => continue,
-                Some(idx) => idx,
-            };
-            let mut next_vals: Vec<Vec<(String, &str)>> = vec![];
-            for val_set in bindings {
-                let original_val = val_set[original_idx].1;
-                for split_val in original_val.split(delimiter) {
-                    let mut modified_row = val_set.clone();
-                    modified_row.push((split.clone(), split_val));
-                    next_vals.push(modified_row);
-                }
+}
+
+fn apply_split<'a>(
+    split: &Vec<(String, String, String)>,
+    record: &'a [String],
+    headers: &'a [String],
+) -> Vec<Vec<(String, String)>> {
+    let mut bindings: Vec<Vec<(String, String)>> =
+        vec![headers.iter().cloned().zip(record.iter().map(|r| r.clone())).collect()];
+    for (original, split, delimiter) in split.iter() {
+        let original_idx = match headers.iter().position(|h| h == original) {
+            None => continue,
+            Some(idx) => idx,
+        };
+        let mut next_vals: Vec<Vec<(String, String)>> = vec![];
+        for val_set in bindings {
+            let original_val = &val_set[original_idx].1;
+            for split_val in original_val.split(delimiter) {
+                let mut modified_row = val_set.clone();
+                modified_row.push((split.clone(), split_val.to_string()));
+                next_vals.push(modified_row);
             }
-            bindings = next_vals;
         }
-        bindings
+        bindings = next_vals;
     }
+    bindings
 }
 
 fn flush_store(
@@ -681,62 +747,53 @@ mod tests {
 
     #[test]
     fn test_apply_split_no_split() {
-        let tarql = OxiTarql {
-            split: vec![],
-            ..Default::default()
-        };
+        let split: Vec<(String, String, String)> = vec![];
         let headers = vec!["col1".to_string(), "col2".to_string()];
-        let record = csv::StringRecord::from(vec!["value1", "value2"]);
+        let record = vec!["value1".to_string(), "value2".to_string()];
 
-        let result = tarql.apply_split(&record, &headers);
+        let result = apply_split(&split, &record, &headers);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].len(), 2);
-        assert_eq!(result[0][0], ("col1".to_string(), "value1"));
-        assert_eq!(result[0][1], ("col2".to_string(), "value2"));
+        assert_eq!(result[0][0], ("col1".to_string(), "value1".to_string()));
+        assert_eq!(result[0][1], ("col2".to_string(), "value2".to_string()));
     }
 
     #[test]
     fn test_apply_split_single_split() {
-        let tarql = OxiTarql {
-            split: vec![("tags".to_string(), "tag".to_string(), ",".to_string())],
-            ..Default::default()
-        };
+        let split = vec![("tags".to_string(), "tag".to_string(), ",".to_string())];
         let headers = vec!["name".to_string(), "tags".to_string()];
-        let record = csv::StringRecord::from(vec!["Alice", "rust,python,go"]);
+        let record = vec!["Alice".to_string(), "rust,python,go".to_string()];
 
-        let result = tarql.apply_split(&record, &headers);
+        let result = apply_split(&split, &record, &headers);
         assert_eq!(result.len(), 3); // 3 tags split
 
         // Check first row
-        assert_eq!(result[0][0], ("name".to_string(), "Alice"));
-        assert_eq!(result[0][1], ("tags".to_string(), "rust,python,go"));
-        assert_eq!(result[0][2], ("tag".to_string(), "rust"));
+        assert_eq!(result[0][0], ("name".to_string(), "Alice".to_string()));
+        assert_eq!(result[0][1], ("tags".to_string(), "rust,python,go".to_string()));
+        assert_eq!(result[0][2], ("tag".to_string(), "rust".to_string()));
 
         // Check second row
-        assert_eq!(result[1][0], ("name".to_string(), "Alice"));
-        assert_eq!(result[1][2], ("tag".to_string(), "python"));
+        assert_eq!(result[1][0], ("name".to_string(), "Alice".to_string()));
+        assert_eq!(result[1][2], ("tag".to_string(), "python".to_string()));
 
         // Check third row
-        assert_eq!(result[2][2], ("tag".to_string(), "go"));
+        assert_eq!(result[2][2], ("tag".to_string(), "go".to_string()));
     }
 
     #[test]
     fn test_apply_split_multiple_splits() {
-        let tarql = OxiTarql {
-            split: vec![
+        let split = vec![
                 ("colors".to_string(), "color".to_string(), ",".to_string()),
                 ("sizes".to_string(), "size".to_string(), ";".to_string()),
-            ],
-            ..Default::default()
-        };
+            ];
         let headers = vec![
             "name".to_string(),
             "colors".to_string(),
             "sizes".to_string(),
         ];
-        let record = csv::StringRecord::from(vec!["Product", "red,blue", "S;M"]);
+        let record = vec!["Product".to_string(), "red,blue".to_string(), "S;M".to_string()];
 
-        let result = tarql.apply_split(&record, &headers);
+        let result = apply_split(&split, &record, &headers);
         // 2 colors × 2 sizes = 4 combinations
         assert_eq!(result.len(), 4);
 
@@ -749,18 +806,15 @@ mod tests {
 
     #[test]
     fn test_apply_split_nonexistent_column() {
-        let tarql = OxiTarql {
-            split: vec![(
+        let split = vec![(
                 "nonexistent".to_string(),
                 "split_val".to_string(),
                 ",".to_string(),
-            )],
-            ..Default::default()
-        };
+            )];
         let headers = vec!["col1".to_string(), "col2".to_string()];
-        let record = csv::StringRecord::from(vec!["value1", "value2"]);
+        let record = vec!["value1".to_string(), "value2".to_string()];
 
-        let result = tarql.apply_split(&record, &headers);
+        let result = apply_split(&split, &record, &headers);
         // Should return original row since column doesn't exist
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].len(), 2);

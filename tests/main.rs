@@ -4,8 +4,8 @@ use oxrdfio::RdfParser;
 use std::fs;
 use std::path::PathBuf;
 
-#[test]
-fn test_integration_split_with_custom_functions() {
+#[tokio::test]
+async fn test_integration_split_with_custom_functions() {
     // Create a temporary file for output
     let temp_file = std::env::temp_dir().join("oxi_tarql_test_output.nt");
 
@@ -53,7 +53,7 @@ fn test_integration_split_with_custom_functions() {
     let mut tarql = configure_transform(args);
 
     // Run the transformation
-    let result = tarql.transform();
+    let result = tarql.transform().await;
     assert!(
         result.is_ok(),
         "Transform should succeed: {:?}",
@@ -76,19 +76,16 @@ fn test_integration_split_with_custom_functions() {
     // Clean up temp file
     let _ = std::fs::remove_file(&temp_file);
 
-    // Verify we have exactly 55 triples
-    // Row 1: d="1;2;3" (3 values) × e="A B C" (3 values) = 9 combinations
-    // Row 2: d="4;5" (2 values) × e="D" (1 value) = 2 combinations
-    // Total: 11 rows × 5 triples per row = 55 triples
+    // Verify we have exactly 15 triples, since triples are deduplicated per row
     assert_eq!(
-        triple_count, 55,
-        "Expected 55 triples in output, got {}",
+        triple_count, 15,
+        "Expected 15 triples in output, got {}",
         triple_count
     );
 }
 
-#[test]
-fn test_integration_turtle_serialization() {
+#[tokio::test]
+async fn test_integration_turtle_serialization() {
     // Create a temporary file for output
     let temp_file = std::env::temp_dir().join("oxi_tarql_test_output.ttl");
 
@@ -135,7 +132,7 @@ fn test_integration_turtle_serialization() {
     let mut tarql = configure_transform(args);
 
     // Run the transformation
-    let result = tarql.transform();
+    let result = tarql.transform().await;
     assert!(
         result.is_ok(),
         "Transform should succeed: {:?}",
@@ -156,8 +153,8 @@ fn test_integration_turtle_serialization() {
     assert!(content.find(":0 a :Item").unwrap() < content.find(":1 a :Item").unwrap());
 }
 
-#[test]
-fn test_integration_with_dedup_and_gzip() {
+#[tokio::test]
+async fn test_integration_with_dedup_and_gzip() {
     // Get paths to test files
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let input_path = manifest_dir.join("tests/fixtures/data_100.csv");
@@ -196,7 +193,7 @@ fn test_integration_with_dedup_and_gzip() {
     let mut tarql = configure_transform(args);
 
     // Run the transformation
-    let result = tarql.transform();
+    let result = tarql.transform().await;
     assert!(
         result.is_ok(),
         "Transform should succeed: {:?}",
