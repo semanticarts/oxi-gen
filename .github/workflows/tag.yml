@@ -123,6 +123,6 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: {{ env.RELEASE_VERSION }}
+          tag_name: ${{ env.RELEASE_VERSION }}
           files: |
             ${{ env.ASSET }}
