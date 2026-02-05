@@ -4,8 +4,8 @@ use oxrdfio::RdfParser;
 use std::fs;
 use std::path::PathBuf;
 
-#[tokio::test]
-async fn test_integration_split_with_custom_functions() {
+#[test]
+fn test_integration_split_with_custom_functions() {
     // Create a temporary file for output
     let temp_file = std::env::temp_dir().join("oxi_tarql_test_output.nt");
 
@@ -53,7 +53,7 @@ async fn test_integration_split_with_custom_functions() {
     let mut tarql = configure_transform(args);
 
     // Run the transformation
-    let result = tarql.transform().await;
+    let result = tarql.transform();
     assert!(
         result.is_ok(),
         "Transform should succeed: {:?}",
@@ -84,8 +84,8 @@ async fn test_integration_split_with_custom_functions() {
     );
 }
 
-#[tokio::test]
-async fn test_integration_turtle_serialization() {
+#[test]
+fn test_integration_turtle_serialization() {
     // Create a temporary file for output
     let temp_file = std::env::temp_dir().join("oxi_tarql_test_output.ttl");
 
@@ -132,7 +132,7 @@ async fn test_integration_turtle_serialization() {
     let mut tarql = configure_transform(args);
 
     // Run the transformation
-    let result = tarql.transform().await;
+    let result = tarql.transform();
     assert!(
         result.is_ok(),
         "Transform should succeed: {:?}",
@@ -153,8 +153,8 @@ async fn test_integration_turtle_serialization() {
     assert!(content.find(":0 a :Item").unwrap() < content.find(":1 a :Item").unwrap());
 }
 
-#[tokio::test]
-async fn test_integration_with_dedup_and_gzip() {
+#[test]
+fn test_integration_with_dedup_and_gzip() {
     // Get paths to test files
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let input_path = manifest_dir.join("tests/fixtures/data_100.csv");
@@ -193,7 +193,7 @@ async fn test_integration_with_dedup_and_gzip() {
     let mut tarql = configure_transform(args);
 
     // Run the transformation
-    let result = tarql.transform().await;
+    let result = tarql.transform();
     assert!(
         result.is_ok(),
         "Transform should succeed: {:?}",

@@ -1,8 +1,8 @@
 use std::{error::Error, fs};
 
 use std::sync::mpsc;
-use std::thread;
 use std::sync::mpsc::sync_channel;
+use std::thread;
 
 use oxrdf::*;
 use oxrdfio::{RdfFormat, RdfSerializer};
@@ -46,7 +46,7 @@ impl OxiTarql {
 
         let mut csv_senders = vec![];
         let mut csv_receivers = vec![];
-        for (sender, receiver ) in (0..num_workers).map(|_| sync_channel(100)) {
+        for (sender, receiver) in (0..num_workers).map(|_| sync_channel(100)) {
             csv_senders.push(sender);
             csv_receivers.push(receiver);
         }
@@ -71,7 +71,7 @@ impl OxiTarql {
         let query_vars = extract_variables(&query_str);
 
         let mut transformers = Vec::with_capacity(num_workers);
-        for tid in 0..num_workers {
+        for _tid in 0..num_workers {
             let triple_tx = triple_tx.clone();
             let receiver = csv_receivers.pop().unwrap();
             // Each captured context gets its own copy of the prefixes
@@ -99,13 +99,17 @@ impl OxiTarql {
                         let mut prepared = evaluator.prepare(&query);
                         for (varname, value) in unwrapped_row {
                             if query_vars.contains(&varname) {
-                                prepared = prepared
-                                    .substitute_variable(Variable::new(varname).unwrap(), Literal::from(value));
+                                prepared = prepared.substitute_variable(
+                                    Variable::new(varname).unwrap(),
+                                    Literal::from(value),
+                                );
                             }
                         }
                         if query_vars.contains("ROWNUM") {
-                            prepared =
-                                prepared.substitute_variable(Variable::new("ROWNUM").unwrap(), Literal::from(row));
+                            prepared = prepared.substitute_variable(
+                                Variable::new("ROWNUM").unwrap(),
+                                Literal::from(row),
+                            );
                         }
 
                         let results = prepared.execute(&empty_store);
@@ -153,7 +157,7 @@ impl OxiTarql {
                         }
                     }
                 });
-            
+
             // Track first output, to only emit prefixes once to Turtle
             let mut first_time = true;
             let mut store = HashSet::<Triple>::new();
@@ -161,15 +165,15 @@ impl OxiTarql {
             while let Ok((row, row_triples)) = triple_rx.recv() {
                 // eprintln!("Received {}: {:?}", row, &row_triples);
                 store.extend(row_triples);
-                if dedup == 0 || store.len() >= dedup.try_into().unwrap()
-                {
+                if dedup == 0 || store.len() >= dedup.try_into().unwrap() {
                     flush_store(
                         &mut store,
                         &mut out_writer,
                         output_format,
                         &prefixes,
                         first_time,
-                    ).unwrap();
+                    )
+                    .unwrap();
                     first_time = false;
                 }
 
@@ -186,7 +190,8 @@ impl OxiTarql {
                     output_format,
                     &prefixes,
                     first_time,
-                ).unwrap();
+                )
+                .unwrap();
             }
             out_writer.flush().expect("Error flushing to output file");
         });
@@ -264,16 +269,20 @@ impl OxiTarql {
 
         Ok(())
     }
-
 }
 
 fn apply_split<'a>(
-    split: &Vec<(String, String, String)>,
+    split: &[(String, String, String)],
     record: &'a [String],
     headers: &'a [String],
 ) -> Vec<Vec<(String, String)>> {
-    let mut bindings: Vec<Vec<(String, String)>> =
-        vec![headers.iter().cloned().zip(record.iter().map(|r| r.clone())).collect()];
+    let mut bindings: Vec<Vec<(String, String)>> = vec![
+        headers
+            .iter()
+            .cloned()
+            .zip(record.iter().cloned())
+            .collect(),
+    ];
     for (original, split, delimiter) in split.iter() {
         let original_idx = match headers.iter().position(|h| h == original) {
             None => continue,
@@ -769,7 +778,10 @@ mod tests {
 
         // Check first row
         assert_eq!(result[0][0], ("name".to_string(), "Alice".to_string()));
-        assert_eq!(result[0][1], ("tags".to_string(), "rust,python,go".to_string()));
+        assert_eq!(
+            result[0][1],
+            ("tags".to_string(), "rust,python,go".to_string())
+        );
         assert_eq!(result[0][2], ("tag".to_string(), "rust".to_string()));
 
         // Check second row
@@ -783,15 +795,19 @@ mod tests {
     #[test]
     fn test_apply_split_multiple_splits() {
         let split = vec![
-                ("colors".to_string(), "color".to_string(), ",".to_string()),
-                ("sizes".to_string(), "size".to_string(), ";".to_string()),
-            ];
+            ("colors".to_string(), "color".to_string(), ",".to_string()),
+            ("sizes".to_string(), "size".to_string(), ";".to_string()),
+        ];
         let headers = vec![
             "name".to_string(),
             "colors".to_string(),
             "sizes".to_string(),
         ];
-        let record = vec!["Product".to_string(), "red,blue".to_string(), "S;M".to_string()];
+        let record = vec![
+            "Product".to_string(),
+            "red,blue".to_string(),
+            "S;M".to_string(),
+        ];
 
         let result = apply_split(&split, &record, &headers);
         // 2 colors × 2 sizes = 4 combinations
@@ -807,10 +823,10 @@ mod tests {
     #[test]
     fn test_apply_split_nonexistent_column() {
         let split = vec![(
-                "nonexistent".to_string(),
-                "split_val".to_string(),
-                ",".to_string(),
-            )];
+            "nonexistent".to_string(),
+            "split_val".to_string(),
+            ",".to_string(),
+        )];
         let headers = vec!["col1".to_string(), "col2".to_string()];
         let record = vec!["value1".to_string(), "value2".to_string()];
 
