@@ -8,8 +8,8 @@ fn main() {
 
     let start = Instant::now();
 
-    tarql.transform().expect("Oops something went wrong");
+    tarql.transform().expect("Transformation failed");
 
-    let duration = start.duration_since(start);
+    let duration = Instant::now().duration_since(start);
     eprintln!("Processing complete in {} seconds", duration.as_secs_f32());
 }

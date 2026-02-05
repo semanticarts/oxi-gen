@@ -76,13 +76,10 @@ fn test_integration_split_with_custom_functions() {
     // Clean up temp file
     let _ = std::fs::remove_file(&temp_file);
 
-    // Verify we have exactly 55 triples
-    // Row 1: d="1;2;3" (3 values) × e="A B C" (3 values) = 9 combinations
-    // Row 2: d="4;5" (2 values) × e="D" (1 value) = 2 combinations
-    // Total: 11 rows × 5 triples per row = 55 triples
+    // Verify we have exactly 15 triples, since triples are deduplicated per row
     assert_eq!(
-        triple_count, 55,
-        "Expected 55 triples in output, got {}",
+        triple_count, 15,
+        "Expected 15 triples in output, got {}",
         triple_count
     );
 }
@@ -122,6 +119,7 @@ fn test_integration_turtle_serialization() {
         "--output".to_string(),
         temp_file.to_str().unwrap().to_string(),
         "-H".to_string(), // no-header-row flag
+        "--dedup=1000".to_string(),
         "--split".to_string(),
         "d".to_string(),
         "d_s".to_string(),
