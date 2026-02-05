@@ -119,6 +119,7 @@ fn test_integration_turtle_serialization() {
         "--output".to_string(),
         temp_file.to_str().unwrap().to_string(),
         "-H".to_string(), // no-header-row flag
+        "--dedup=1000".to_string(),
         "--split".to_string(),
         "d".to_string(),
         "d_s".to_string(),
