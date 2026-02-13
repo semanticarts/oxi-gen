@@ -516,7 +516,9 @@ where
             Arg::new("bind_empty_strings")
                 .long("bind-empty-strings")
                 .action(ArgAction::SetTrue)
-                .help("Bind empty CSV values as empty string literals (default: skip empty values)"),
+                .help(
+                    "Bind empty CSV values as empty string literals (default: skip empty values)",
+                ),
         )
         .arg(
             Arg::new("output")
@@ -803,7 +805,10 @@ mod tests {
         );
         let qname = Term::Literal(Literal::from(""));
         let result = expand_prefixed_name(&prefixes, &qname);
-        assert!(result.is_none(), "expandPrefixedName should return None for empty parameter");
+        assert!(
+            result.is_none(),
+            "expandPrefixedName should return None for empty parameter"
+        );
     }
 
     #[test]
