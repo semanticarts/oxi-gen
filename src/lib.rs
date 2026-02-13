@@ -34,6 +34,7 @@ pub struct OxiTarql {
     pub gzip: bool,
     pub ntriples: bool,
     pub dedup: u32,
+    pub bind_empty_strings: bool,
     pub input: String,
     pub output: String,
     pub query: String,
@@ -69,6 +70,7 @@ impl OxiTarql {
         // the variable is referenced in the query. Extract anything that looks like
         // a variable identifier, and then filter out columns that are not used
         let query_vars = extract_variables(&query_str);
+        let bind_empty = self.bind_empty_strings;
 
         let mut transformers = Vec::with_capacity(num_workers);
         for _tid in 0..num_workers {
@@ -84,7 +86,7 @@ impl OxiTarql {
                 )
                 .with_custom_function(
                     NamedNode::new("https://semanticarts.com/tarql/expandPrefixedName")?,
-                    move |args| args.first().map(|p| expand_prefixed_name(&p2, p).unwrap()),
+                    move |args| args.first().and_then(|p| expand_prefixed_name(&p2, p)),
                 );
             let query = query.clone();
             let query_vars = query_vars.clone();
@@ -99,10 +101,14 @@ impl OxiTarql {
                         let mut prepared = evaluator.prepare(&query);
                         for (varname, value) in unwrapped_row {
                             if query_vars.contains(&varname) {
-                                prepared = prepared.substitute_variable(
-                                    Variable::new(varname).unwrap(),
-                                    Literal::from(value),
-                                );
+                                // Skip empty values unless bind_empty is true
+                                let value_str: String = value;
+                                if bind_empty || !value_str.is_empty() {
+                                    prepared = prepared.substitute_variable(
+                                        Variable::new(varname).unwrap(),
+                                        Literal::from(value_str),
+                                    );
+                                }
                             }
                         }
                         if query_vars.contains("ROWNUM") {
@@ -367,6 +373,9 @@ fn expand_prefixed_name(prefixes: &HashMap<String, String>, qname: &Term) -> Opt
             exit(-1);
         }
     };
+    if qname_str.is_empty() {
+        return None;
+    }
     let (prefix_name, rest) = qname_str.split_at(match qname_str.find(':') {
         Some(offset) => offset,
         _ => {
@@ -391,7 +400,12 @@ fn extract_prefixes(query_text: &str) -> HashMap<String, String> {
 
 fn extract_variables(query_text: &str) -> HashSet<String> {
     let re = Regex::new(r"\?([A-Za-z_][A-Za-z_0-9]*?)[^A-Za-z_0-9]").unwrap();
-    re.captures_iter(query_text)
+    let without_comments: String = query_text
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<&str>>()
+        .join("\n");
+    re.captures_iter(&without_comments)
         .map(|c| c.extract())
         .map(|(_, [varname])| varname.to_string())
         .collect()
@@ -499,6 +513,12 @@ where
                 .help("Window size in which to remove duplicate triples (default=1000)"),
         )
         .arg(
+            Arg::new("bind_empty_strings")
+                .long("bind-empty-strings")
+                .action(ArgAction::SetTrue)
+                .help("Bind empty CSV values as empty string literals (default: skip empty values)"),
+        )
+        .arg(
             Arg::new("output")
                 .short('o')
                 .long("output")
@@ -563,6 +583,7 @@ where
             None => 0,
             Some(t) => *t,
         },
+        bind_empty_strings: matches.get_flag("bind_empty_strings"),
         input: matches.get_one::<String>("input").unwrap().to_string(),
         output: matches.get_one::<String>("output").unwrap().to_string(),
         query: matches.get_one::<String>("query").unwrap().to_string(),
@@ -667,6 +688,25 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_variables_with_comments() {
+        let query = r#"
+            SELECT ?name ?age WHERE {
+                # This is a comment with ?commented_var
+                ?person foaf:name ?name .
+                  # Another comment with ?another_commented_var
+                ?person foaf:age ?age
+            }
+        "#;
+        let vars = extract_variables(query);
+        assert!(vars.contains("name"));
+        assert!(vars.contains("age"));
+        assert!(vars.contains("person"));
+        // Variables in comments should not be extracted
+        assert!(!vars.contains("commented_var"));
+        assert!(!vars.contains("another_commented_var"));
+    }
+
+    #[test]
     fn test_expand_prefix_valid() {
         let mut prefixes = HashMap::new();
         prefixes.insert(
@@ -752,6 +792,18 @@ mod tests {
         let qname = Term::Literal(Literal::from("nocolon"));
         let result = expand_prefixed_name(&prefixes, &qname);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_expand_prefixed_name_empty() {
+        let mut prefixes = HashMap::new();
+        prefixes.insert(
+            "rdf".to_string(),
+            "http://www.w3.org/1999/02/22-rdf-syntax-ns#".to_string(),
+        );
+        let qname = Term::Literal(Literal::from(""));
+        let result = expand_prefixed_name(&prefixes, &qname);
+        assert!(result.is_none(), "expandPrefixedName should return None for empty parameter");
     }
 
     #[test]

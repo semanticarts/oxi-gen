@@ -245,3 +245,211 @@ fn test_integration_with_dedup_and_gzip() {
     eprintln!("Total triples generated: {}", triples);
     eprintln!(":FixedMeta triples: {}", fixed_meta_count);
 }
+
+#[test]
+fn test_integration_optional_field_empty_values() {
+    // Create a temporary file for output
+    let temp_file = std::env::temp_dir().join("oxi_tarql_test_optional.nt");
+
+    // Clean up any existing temp file
+    let _ = std::fs::remove_file(&temp_file);
+
+    // Get absolute paths for input files
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let input_path = manifest_dir.join("tests/fixtures/optional_field.csv");
+    let query_path = manifest_dir.join("tests/fixtures/optional_field.rq");
+
+    // Verify test files exist
+    assert!(
+        input_path.exists(),
+        "Input file should exist: {:?}",
+        input_path
+    );
+    assert!(
+        query_path.exists(),
+        "Query file should exist: {:?}",
+        query_path
+    );
+
+    // Build command-line arguments WITHOUT --bind-empty-strings (default behavior)
+    let args = vec![
+        "oxi_tarql".to_string(),
+        "--input".to_string(),
+        input_path.to_str().unwrap().to_string(),
+        "--query".to_string(),
+        query_path.to_str().unwrap().to_string(),
+        "--output".to_string(),
+        temp_file.to_str().unwrap().to_string(),
+        "--ntriples".to_string(),
+    ];
+
+    let mut tarql = configure_transform(args);
+
+    // Run the transformation
+    let result = tarql.transform();
+    assert!(
+        result.is_ok(),
+        "Transform should succeed: {:?}",
+        result.err()
+    );
+
+    // Read the output file
+    assert!(
+        temp_file.exists(),
+        "Output file should exist at {:?}",
+        temp_file
+    );
+    let content = fs::read_to_string(&temp_file).expect("Should read output file");
+
+    // Count altLabel triples - should only be 1 (for the first row with "uno")
+    let alt_label_count = content.matches("altLabel").count();
+
+    // Count total non-empty lines (triples)
+    let triple_count = content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count();
+
+    // Clean up temp file
+    let _ = std::fs::remove_file(&temp_file);
+
+    // Verify only one altLabel triple was created (for row 1 with value "uno")
+    assert_eq!(
+        alt_label_count, 1,
+        "Expected exactly 1 altLabel triple (only for row with non-empty value), got {}",
+        alt_label_count
+    );
+
+    // Verify we have the expected number of triples:
+    // Row 1: type, prefLabel, altLabel = 3 triples
+    // Row 2: type, prefLabel (NO altLabel because value is empty) = 2 triples
+    // Total: 5 triples
+    assert_eq!(
+        triple_count, 5,
+        "Expected 5 triples total (3 for row 1, 2 for row 2), got {}",
+        triple_count
+    );
+
+    // Verify the content contains expected values
+    assert!(
+        content.contains("\"uno\""),
+        "Should contain the alt_label value 'uno' from first row"
+    );
+    assert!(
+        content.contains("test.com/d/one"),
+        "Should contain subject one from first row"
+    );
+    assert!(
+        content.contains("test.com/d/two"),
+        "Should contain subject two from second row"
+    );
+}
+
+#[test]
+fn test_integration_expand_prefixed_name_with_empty_values() {
+    // Create a temporary file for output
+    let temp_file = std::env::temp_dir().join("oxi_tarql_test_successor.nt");
+
+    // Clean up any existing temp file
+    let _ = std::fs::remove_file(&temp_file);
+
+    // Get absolute paths for input files
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let input_path = manifest_dir.join("tests/fixtures/successor_field.csv");
+    let query_path = manifest_dir.join("tests/fixtures/successor_field.rq");
+
+    // Verify test files exist
+    assert!(
+        input_path.exists(),
+        "Input file should exist: {:?}",
+        input_path
+    );
+    assert!(
+        query_path.exists(),
+        "Query file should exist: {:?}",
+        query_path
+    );
+
+    // Build command-line arguments WITHOUT --bind-empty-strings (default behavior)
+    let args = vec![
+        "oxi_tarql".to_string(),
+        "--input".to_string(),
+        input_path.to_str().unwrap().to_string(),
+        "--query".to_string(),
+        query_path.to_str().unwrap().to_string(),
+        "--output".to_string(),
+        temp_file.to_str().unwrap().to_string(),
+        "--ntriples".to_string(),
+    ];
+
+    let mut tarql = configure_transform(args);
+
+    // Run the transformation
+    let result = tarql.transform();
+    assert!(
+        result.is_ok(),
+        "Transform should succeed: {:?}",
+        result.err()
+    );
+
+    // Read the output file
+    assert!(
+        temp_file.exists(),
+        "Output file should exist at {:?}",
+        temp_file
+    );
+    let content = fs::read_to_string(&temp_file).expect("Should read output file");
+
+    // Count hasSuccessor triples - should only be 1 (for the first row with ":two")
+    let successor_count = content.matches("hasSuccessor").count();
+
+    // Count altLabel triples - should only be 1 (for the first row with "uno")
+    let alt_label_count = content.matches("altLabel").count();
+
+    // Count total non-empty lines (triples)
+    let triple_count = content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count();
+
+    // Clean up temp file
+    let _ = std::fs::remove_file(&temp_file);
+
+    // Verify only one hasSuccessor triple was created (for row 1 with value ":two")
+    assert_eq!(
+        successor_count, 1,
+        "Expected exactly 1 hasSuccessor triple (only for row with non-empty successor), got {}",
+        successor_count
+    );
+
+    // Verify only one altLabel triple was created (for row 1 with value "uno")
+    assert_eq!(
+        alt_label_count, 1,
+        "Expected exactly 1 altLabel triple (only for row with non-empty alt_label), got {}",
+        alt_label_count
+    );
+
+    // Verify we have the expected number of triples:
+    // Row 1: type, prefLabel, altLabel, hasSuccessor = 4 triples
+    // Row 2: type, prefLabel (NO altLabel, NO hasSuccessor because both are empty) = 2 triples
+    // Total: 6 triples
+    assert_eq!(
+        triple_count, 6,
+        "Expected 6 triples total (4 for row 1, 2 for row 2), got {}",
+        triple_count
+    );
+
+    // Verify the content contains expected values
+    assert!(
+        content.contains("\"uno\""),
+        "Should contain the alt_label value 'uno' from first row"
+    );
+    assert!(
+        content.contains("test.com/d/one"),
+        "Should contain subject one from first row"
+    );
+    assert!(
+        content.contains("test.com/d/two"),
+        "Should contain both subject two and successor reference to two"
+    );
+}

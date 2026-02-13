@@ -1,0 +1,14 @@
+prefix : <https://test.com/d/>
+prefix two: <https://test.com/d2/>
+prefix xsd: <http://www.w3.org/2001/XMLSchema#>
+
+construct {
+    ?id_iri a :Item ;
+       :size ?typed_size ;
+       :related ?ref_iri .
+} where {
+    bind(IRI(CONCAT(tarql:expandPrefix(''),STR(?a))) as ?id_iri)
+    bind(tarql:expandPrefixedName(CONCAT(':',STR(?b))) as ?ref_iri)
+    bind(xsd:integer(?c) as ?typed_size)
+}
+   

@@ -1,0 +1,9 @@
+prefix : <https://test.com/d/>
+prefix xsd: <http://www.w3.org/2001/XMLSchema#>
+
+construct {
+    ?id_iri a :Item ; :onRow ?ROWNUM
+} where {
+    bind(IRI(CONCAT('https://test.com/d/',STR(?a))) as ?id_iri)
+}
+   
