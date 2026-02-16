@@ -103,7 +103,7 @@ impl OxiTarql {
                             if query_vars.contains(&varname) {
                                 // Skip empty values unless bind_empty is true
                                 let value_str: String = value;
-                                if bind_empty || !value_str.is_empty() {
+                                if bind_empty || !value_str.trim().is_empty() {
                                     prepared = prepared.substitute_variable(
                                         Variable::new(varname).unwrap(),
                                         Literal::from(value_str),
