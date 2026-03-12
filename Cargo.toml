@@ -1,6 +1,6 @@
 [package]
-name = "oxi_tarql"
-version = "0.3.1"
+name = "oxi_gen"
+version = "0.4.0"
 edition = "2024"
 
 [dependencies]

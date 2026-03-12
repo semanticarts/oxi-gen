@@ -102,7 +102,7 @@ jobs:
         shell: bash
         run: |
           # Replace with the name of your binary
-          binary_name="oxi_tarql"
+          binary_name="oxi_gen"
 
           dirname="$binary_name-${{ env.RELEASE_VERSION }}-${{ matrix.target }}"
           mkdir "$dirname"

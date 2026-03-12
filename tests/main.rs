@@ -1,13 +1,14 @@
 use flate2::read::GzDecoder;
-use oxi_tarql::configure_transform;
+use oxi_gen::configure_transform;
 use oxrdfio::RdfParser;
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
 #[test]
 fn test_integration_split_with_custom_functions() {
     // Create a temporary file for output
-    let temp_file = std::env::temp_dir().join("oxi_tarql_test_output.nt");
+    let temp_file = std::env::temp_dir().join("oxi_gen_test_output.nt");
 
     // Clean up any existing temp file
     let _ = std::fs::remove_file(&temp_file);
@@ -31,7 +32,7 @@ fn test_integration_split_with_custom_functions() {
 
     // Build command-line arguments for configure_transform
     let args = vec![
-        "oxi_tarql".to_string(),
+        "oxi_gen".to_string(),
         "--input".to_string(),
         input_path.to_str().unwrap().to_string(),
         "--query".to_string(),
@@ -50,10 +51,10 @@ fn test_integration_split_with_custom_functions() {
         " ".to_string(),
     ];
 
-    let mut tarql = configure_transform(args);
+    let mut transform = configure_transform(args);
 
     // Run the transformation
-    let result = tarql.transform();
+    let result = transform.transform();
     assert!(
         result.is_ok(),
         "Transform should succeed: {:?}",
@@ -87,7 +88,7 @@ fn test_integration_split_with_custom_functions() {
 #[test]
 fn test_integration_turtle_serialization() {
     // Create a temporary file for output
-    let temp_file = std::env::temp_dir().join("oxi_tarql_test_output.ttl");
+    let temp_file = std::env::temp_dir().join("oxi_gen_test_output.ttl");
 
     // Clean up any existing temp file
     let _ = std::fs::remove_file(&temp_file);
@@ -111,7 +112,7 @@ fn test_integration_turtle_serialization() {
 
     // Build command-line arguments for configure_transform
     let args = vec![
-        "oxi_tarql".to_string(),
+        "oxi_gen".to_string(),
         "--input".to_string(),
         input_path.to_str().unwrap().to_string(),
         "--query".to_string(),
@@ -130,10 +131,10 @@ fn test_integration_turtle_serialization() {
         " ".to_string(),
     ];
 
-    let mut tarql = configure_transform(args);
+    let mut transform = configure_transform(args);
 
     // Run the transformation
-    let result = tarql.transform();
+    let result = transform.transform();
     assert!(
         result.is_ok(),
         "Transform should succeed: {:?}",
@@ -160,7 +161,7 @@ fn test_integration_with_dedup_and_gzip() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let input_path = manifest_dir.join("tests/fixtures/data_100.csv");
     let query_path = manifest_dir.join("tests/fixtures/with_dup.rq");
-    let temp_file = std::env::temp_dir().join("oxi_tarql_test_dedup.nt.gz");
+    let temp_file = std::env::temp_dir().join("oxi_gen_test_dedup.nt.gz");
 
     // Clean up any existing temp file
     let _ = std::fs::remove_file(&temp_file);
@@ -179,7 +180,7 @@ fn test_integration_with_dedup_and_gzip() {
 
     // Build command-line arguments for configure_transform
     let args = vec![
-        "oxi_tarql".to_string(),
+        "oxi_gen".to_string(),
         "--input".to_string(),
         input_path.to_str().unwrap().to_string(),
         "--query".to_string(),
@@ -191,10 +192,10 @@ fn test_integration_with_dedup_and_gzip() {
         "--dedup=1000".to_string(),
     ];
 
-    let mut tarql = configure_transform(args);
+    let mut transform = configure_transform(args);
 
     // Run the transformation
-    let result = tarql.transform();
+    let result = transform.transform();
     assert!(
         result.is_ok(),
         "Transform should succeed: {:?}",
@@ -249,7 +250,7 @@ fn test_integration_with_dedup_and_gzip() {
 #[test]
 fn test_integration_optional_field_empty_values() {
     // Create a temporary file for output
-    let temp_file = std::env::temp_dir().join("oxi_tarql_test_optional.nt");
+    let temp_file = std::env::temp_dir().join("oxi_gen_test_optional.nt");
 
     // Clean up any existing temp file
     let _ = std::fs::remove_file(&temp_file);
@@ -273,7 +274,7 @@ fn test_integration_optional_field_empty_values() {
 
     // Build command-line arguments WITHOUT --bind-empty-strings (default behavior)
     let args = vec![
-        "oxi_tarql".to_string(),
+        "oxi_gen".to_string(),
         "--input".to_string(),
         input_path.to_str().unwrap().to_string(),
         "--query".to_string(),
@@ -283,10 +284,10 @@ fn test_integration_optional_field_empty_values() {
         "--ntriples".to_string(),
     ];
 
-    let mut tarql = configure_transform(args);
+    let mut transform = configure_transform(args);
 
     // Run the transformation
-    let result = tarql.transform();
+    let result = transform.transform();
     assert!(
         result.is_ok(),
         "Transform should succeed: {:?}",
@@ -348,7 +349,7 @@ fn test_integration_optional_field_empty_values() {
 #[test]
 fn test_integration_expand_prefixed_name_with_empty_values() {
     // Create a temporary file for output
-    let temp_file = std::env::temp_dir().join("oxi_tarql_test_successor.nt");
+    let temp_file = std::env::temp_dir().join("oxi_gen_test_successor.nt");
 
     // Clean up any existing temp file
     let _ = std::fs::remove_file(&temp_file);
@@ -372,7 +373,7 @@ fn test_integration_expand_prefixed_name_with_empty_values() {
 
     // Build command-line arguments WITHOUT --bind-empty-strings (default behavior)
     let args = vec![
-        "oxi_tarql".to_string(),
+        "oxi_gen".to_string(),
         "--input".to_string(),
         input_path.to_str().unwrap().to_string(),
         "--query".to_string(),
@@ -382,10 +383,10 @@ fn test_integration_expand_prefixed_name_with_empty_values() {
         "--ntriples".to_string(),
     ];
 
-    let mut tarql = configure_transform(args);
+    let mut transform = configure_transform(args);
 
     // Run the transformation
-    let result = tarql.transform();
+    let result = transform.transform();
     assert!(
         result.is_ok(),
         "Transform should succeed: {:?}",
@@ -451,5 +452,125 @@ fn test_integration_expand_prefixed_name_with_empty_values() {
     assert!(
         content.contains("test.com/d/two"),
         "Should contain both subject two and successor reference to two"
+    );
+}
+
+#[test]
+fn test_integration_escaped_special_characters() {
+    let temp_file = std::env::temp_dir().join("oxi_gen_test_escaped.nt");
+    let _ = std::fs::remove_file(&temp_file);
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let input_path = manifest_dir.join("tests/fixtures/escaped_chars.csv");
+    let query_path = manifest_dir.join("tests/fixtures/escaped_chars.rq");
+
+    assert!(
+        input_path.exists(),
+        "Input file should exist: {:?}",
+        input_path
+    );
+    assert!(
+        query_path.exists(),
+        "Query file should exist: {:?}",
+        query_path
+    );
+
+    let args = vec![
+        "oxi_gen".to_string(),
+        "--input".to_string(),
+        input_path.to_str().unwrap().to_string(),
+        "--query".to_string(),
+        query_path.to_str().unwrap().to_string(),
+        "--output".to_string(),
+        temp_file.to_str().unwrap().to_string(),
+        "--ntriples".to_string(),
+    ];
+
+    let mut transform = configure_transform(args);
+    let result = transform.transform();
+    assert!(
+        result.is_ok(),
+        "Transform should succeed: {:?}",
+        result.err()
+    );
+
+    assert!(
+        temp_file.exists(),
+        "Output file should exist at {:?}",
+        temp_file
+    );
+
+    // Parse the N-Triples output with a proper RDF parser to validate correctness
+    let file = fs::File::open(&temp_file).expect("Should open output file");
+    let parser = RdfParser::from_format(oxrdfio::RdfFormat::NTriples).for_reader(file);
+
+    let description_pred = "https://test.com/d/description";
+    let mut descriptions: HashMap<String, String> = HashMap::new();
+
+    for q in parser {
+        let quad = q.expect("All output triples must be valid N-Triples");
+        if quad.predicate.as_str() == description_pred
+            && let oxrdf::Term::Literal(lit) = &quad.object
+        {
+            let subj = quad.subject.to_string();
+            descriptions.insert(subj, lit.value().to_string());
+        }
+    }
+
+    let _ = std::fs::remove_file(&temp_file);
+
+    // Should have 4 rows, each producing a description triple
+    assert_eq!(
+        descriptions.len(),
+        4,
+        "Expected 4 description literals, got {}",
+        descriptions.len()
+    );
+
+    // Row 1: CSV `\\` escapes produce literal backslashes in the value.
+    // Verifies that backslash characters survive CSV→SPARQL→RDF serialization→parse round-trip.
+    let row0 = descriptions
+        .get("<https://test.com/d/row_0>")
+        .expect("Should have description for row 0");
+    assert_eq!(
+        row0, "C:\\Users\\test\\path",
+        "Row 0: backslash-escaped path should produce literal backslashes"
+    );
+
+    // Row 2: literal `\n` and `\t` sequences (not control characters).
+    // The CSV escape char consumes the first `\`, so `\\n` → `\n` as two chars.
+    let row1 = descriptions
+        .get("<https://test.com/d/row_1>")
+        .expect("Should have description for row 1");
+    assert_eq!(
+        row1, "line1\\nline2\\ttab",
+        "Row 1: literal backslash-n and backslash-t sequences should be preserved"
+    );
+    // Confirm these are actual backslash + letter, not control characters
+    assert!(
+        !row1.contains('\n') && !row1.contains('\t'),
+        "Row 1 must not contain real newline or tab control characters"
+    );
+
+    // Row 3: CSV `\"` escape produces literal quote characters in the value.
+    let row2 = descriptions
+        .get("<https://test.com/d/row_2>")
+        .expect("Should have description for row 2");
+    assert_eq!(
+        row2, "say \"hello world\"",
+        "Row 2: escaped quotes should produce literal double-quote characters"
+    );
+
+    // Row 4: both backslash and quote escapes together in one value.
+    let row3 = descriptions
+        .get("<https://test.com/d/row_3>")
+        .expect("Should have description for row 3");
+    assert_eq!(
+        row3, "mixed: C:\\path \"quoted\"",
+        "Row 3: mixed backslash and quote escapes should both be preserved"
+    );
+    assert!(
+        row3.contains('\\') && row3.contains('"'),
+        "Row 3 must contain both backslash and quote characters"
     );
 }
