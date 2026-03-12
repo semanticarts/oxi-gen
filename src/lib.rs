@@ -23,7 +23,7 @@ use clap::{Arg, ArgAction, ArgMatches, command, value_parser};
 
 #[allow(dead_code)]
 #[derive(Default)]
-pub struct OxiTarql {
+pub struct OxiGen {
     pub delimiter: String,
     pub tab: bool,
     pub test: u32,
@@ -41,7 +41,7 @@ pub struct OxiTarql {
     pub split: Vec<(String, String, String)>,
 }
 
-impl OxiTarql {
+impl OxiGen {
     pub fn transform(&mut self) -> Result<(), Box<dyn Error>> {
         let num_workers: usize = num_cpus::get();
 
@@ -424,7 +424,7 @@ where
     I: IntoIterator<Item = String>,
 {
     command!()
-        .about("Convert CSV file to RDF using SPARQL")
+        .about("oxi-gen: Convert CSV file to RDF using SPARQL")
         .arg(
             Arg::new("delimiter")
                 .short('d')
@@ -547,7 +547,7 @@ where
         .get_matches_from(args)
 }
 
-pub fn configure_transform<I>(args: I) -> OxiTarql
+pub fn configure_transform<I>(args: I) -> OxiGen
 where
     I: IntoIterator<Item = String>,
 {
@@ -565,7 +565,7 @@ where
         }
     };
 
-    OxiTarql {
+    OxiGen {
         delimiter: matches.get_one::<String>("delimiter").unwrap().to_string(),
         tab: matches.get_flag("tab"),
         test: match matches.get_one::<u32>("test") {
