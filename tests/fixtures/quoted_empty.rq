@@ -1,10 +1,9 @@
-prefix pazr: <https://ontologies.payzer.com/>
-prefix pazrd: <https://data.payzer.com/>
+prefix : <https://test.com/d/>
 
 CONSTRUCT {
-    ?ahri_component_iri pazr:isOfferedAs ?product_spec_iri .
+    ?component_iri :isOfferedAs ?product_spec_iri .
 }
 WHERE {
-    BIND(tarql:expandPrefixedName(CONCAT("pazrd:", ?ahri_component_rsid)) AS ?ahri_component_iri)
-    BIND(tarql:expandPrefixedName(CONCAT("pazrd:", ?product_spec_rsid)) AS ?product_spec_iri)
+    BIND(tarql:expandPrefixedName(CONCAT(":", ?component_rsid)) AS ?component_iri)
+    BIND(tarql:expandPrefixedName(CONCAT(":", ?product_spec_rsid)) AS ?product_spec_iri)
 }

@@ -639,7 +639,7 @@ fn test_integration_quoted_empty_strings_default() {
 
     // Verify specific triples
     assert!(
-        content.contains("_AhriComp_123"),
+        content.contains("_Comp_123"),
         "Should contain row 1 subject"
     );
     assert!(
@@ -647,7 +647,7 @@ fn test_integration_quoted_empty_strings_default() {
         "Should contain row 1 object"
     );
     assert!(
-        content.contains("_AhriComp_111"),
+        content.contains("_Comp_111"),
         "Should contain row 4 subject"
     );
     assert!(
@@ -661,7 +661,7 @@ fn test_integration_quoted_empty_strings_default() {
         "Should NOT contain object from row 2 (empty subject)"
     );
     assert!(
-        !content.contains("_AhriComp_789"),
+        !content.contains("_Comp_789"),
         "Should NOT contain subject from row 3 (empty object)"
     );
 }
