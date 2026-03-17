@@ -574,3 +574,149 @@ fn test_integration_escaped_special_characters() {
         "Row 3 must contain both backslash and quote characters"
     );
 }
+
+#[test]
+fn test_integration_quoted_empty_strings_default() {
+    // Reproduces the bug: quoted empty strings ("") in CSV should not panic
+    // and should be treated as absent/unbound values (default behavior)
+    let temp_file = std::env::temp_dir().join("oxi_gen_test_quoted_empty.nt");
+    let _ = std::fs::remove_file(&temp_file);
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let input_path = manifest_dir.join("tests/fixtures/quoted_empty.csv");
+    let query_path = manifest_dir.join("tests/fixtures/quoted_empty.rq");
+
+    assert!(
+        input_path.exists(),
+        "Input file should exist: {:?}",
+        input_path
+    );
+    assert!(
+        query_path.exists(),
+        "Query file should exist: {:?}",
+        query_path
+    );
+
+    let args = vec![
+        "oxi_gen".to_string(),
+        "--input".to_string(),
+        input_path.to_str().unwrap().to_string(),
+        "--query".to_string(),
+        query_path.to_str().unwrap().to_string(),
+        "--output".to_string(),
+        temp_file.to_str().unwrap().to_string(),
+        "--ntriples".to_string(),
+    ];
+
+    let mut tarql = configure_transform(args);
+    let result = tarql.transform();
+    assert!(
+        result.is_ok(),
+        "Transform should succeed with quoted empty strings: {:?}",
+        result.err()
+    );
+
+    assert!(
+        temp_file.exists(),
+        "Output file should exist at {:?}",
+        temp_file
+    );
+    let content = fs::read_to_string(&temp_file).expect("Should read output file");
+
+    let triple_count = content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count();
+
+    let _ = std::fs::remove_file(&temp_file);
+
+    // Only rows 1 and 4 have both columns non-empty, so exactly 2 triples
+    assert_eq!(
+        triple_count, 2,
+        "Expected 2 triples (only rows where both columns are non-empty), got {}",
+        triple_count
+    );
+
+    // Verify specific triples
+    assert!(
+        content.contains("_Comp_123"),
+        "Should contain row 1 subject"
+    );
+    assert!(
+        content.contains("_ProdSpec_456"),
+        "Should contain row 1 object"
+    );
+    assert!(
+        content.contains("_Comp_111"),
+        "Should contain row 4 subject"
+    );
+    assert!(
+        content.contains("_ProdSpec_222"),
+        "Should contain row 4 object"
+    );
+
+    // Rows with empty values should be skipped
+    assert!(
+        !content.contains("_ProdSpec_654"),
+        "Should NOT contain object from row 2 (empty subject)"
+    );
+    assert!(
+        !content.contains("_Comp_789"),
+        "Should NOT contain subject from row 3 (empty object)"
+    );
+}
+
+#[test]
+fn test_integration_quoted_empty_strings_bind_empty() {
+    // When --bind-empty-strings is set, empty quoted values should be bound
+    // as empty string literals. expandPrefixedName with an empty local name
+    // produces a NamedNode with just the prefix IRI.
+    let temp_file = std::env::temp_dir().join("oxi_gen_test_quoted_empty_bind.nt");
+    let _ = std::fs::remove_file(&temp_file);
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let input_path = manifest_dir.join("tests/fixtures/quoted_empty.csv");
+    let query_path = manifest_dir.join("tests/fixtures/quoted_empty.rq");
+
+    let args = vec![
+        "oxi_gen".to_string(),
+        "--input".to_string(),
+        input_path.to_str().unwrap().to_string(),
+        "--query".to_string(),
+        query_path.to_str().unwrap().to_string(),
+        "--output".to_string(),
+        temp_file.to_str().unwrap().to_string(),
+        "--ntriples".to_string(),
+        "--bind-empty-strings".to_string(),
+    ];
+
+    let mut tarql = configure_transform(args);
+    let result = tarql.transform();
+    assert!(
+        result.is_ok(),
+        "Transform should succeed with --bind-empty-strings: {:?}",
+        result.err()
+    );
+
+    assert!(
+        temp_file.exists(),
+        "Output file should exist at {:?}",
+        temp_file
+    );
+    let content = fs::read_to_string(&temp_file).expect("Should read output file");
+
+    let triple_count = content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count();
+
+    let _ = std::fs::remove_file(&temp_file);
+
+    // With --bind-empty-strings, all 4 rows should produce triples
+    // (empty values become empty NamedNodes via expandPrefixedName)
+    assert_eq!(
+        triple_count, 4,
+        "Expected 4 triples (all rows produce output with --bind-empty-strings), got {}",
+        triple_count
+    );
+}

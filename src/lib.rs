@@ -171,7 +171,7 @@ impl OxiGen {
             while let Ok((row, row_triples)) = triple_rx.recv() {
                 // eprintln!("Received {}: {:?}", row, &row_triples);
                 store.extend(row_triples);
-                if dedup == 0 || store.len() >= dedup.try_into().unwrap() {
+                if !store.is_empty() && (dedup == 0 || store.len() >= dedup.try_into().unwrap()) {
                     flush_store(
                         &mut store,
                         &mut out_writer,
@@ -266,12 +266,26 @@ impl OxiGen {
         });
         // eprintln!("Reader spawned");
 
-        reader_task.join().unwrap();
-        for t in transformers {
-            t.join().unwrap();
-        }
+        let reader_result = reader_task.join();
+        let transformer_results: Vec<_> = transformers.into_iter().map(|t| t.join()).collect();
         drop(triple_tx);
-        writer_task.join().unwrap();
+        let writer_result = writer_task.join();
+
+        // Check for thread panics and report them clearly
+        if let Err(e) = writer_result {
+            eprintln!("Writer thread panicked: {:?}", e);
+            return Err("Writer thread panicked".into());
+        }
+        for (i, result) in transformer_results.into_iter().enumerate() {
+            if let Err(e) = result {
+                eprintln!("Transformer thread {} panicked: {:?}", i, e);
+                return Err("Transformer thread panicked".into());
+            }
+        }
+        if let Err(e) = reader_result {
+            eprintln!("Reader thread panicked: {:?}", e);
+            return Err("Reader thread panicked".into());
+        }
 
         Ok(())
     }
@@ -341,10 +355,14 @@ fn flush_store(
     }
     let mut rdf_str = serializer.finish().unwrap();
     if !first_time && format == RdfFormat::Turtle {
-        // Remove all leading prefix lines. Safe to do this because
-        // we are guaranteed a non-empty store
-        while rdf_str.get(0..7).unwrap() == b"@prefix" {
-            rdf_str = rdf_str.split_off(rdf_str.iter().position(|c| *c == b'\n').unwrap() + 1);
+        // Remove all leading prefix lines
+        while rdf_str.get(0..7).is_some_and(|s| s == b"@prefix") {
+            if let Some(pos) = rdf_str.iter().position(|c| *c == b'\n') {
+                rdf_str = rdf_str.split_off(pos + 1);
+            } else {
+                rdf_str.clear();
+                break;
+            }
         }
     }
     let _ = out_writer.write_all(&rdf_str);
