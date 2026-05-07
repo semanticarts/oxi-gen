@@ -733,8 +733,16 @@ fn test_integration_rdf12_reification() {
     let input_path = manifest_dir.join("tests/fixtures/reification.csv");
     let query_path = manifest_dir.join("tests/fixtures/reification.rq");
 
-    assert!(input_path.exists(), "Input file should exist: {:?}", input_path);
-    assert!(query_path.exists(), "Query file should exist: {:?}", query_path);
+    assert!(
+        input_path.exists(),
+        "Input file should exist: {:?}",
+        input_path
+    );
+    assert!(
+        query_path.exists(),
+        "Query file should exist: {:?}",
+        query_path
+    );
 
     let args = vec![
         "oxi_gen".to_string(),
@@ -754,7 +762,11 @@ fn test_integration_rdf12_reification() {
         result.err()
     );
 
-    assert!(temp_file.exists(), "Output file should exist at {:?}", temp_file);
+    assert!(
+        temp_file.exists(),
+        "Output file should exist at {:?}",
+        temp_file
+    );
     let content = fs::read_to_string(&temp_file).expect("Should read output file");
 
     // Parse the Turtle output to validate it's well-formed RDF
@@ -787,9 +799,21 @@ fn test_integration_rdf12_reification() {
     let _ = std::fs::remove_file(&temp_file);
 
     // 2 rows => 2 :type triples, 2 :name triples, 2 :source triples, 2 rdf:reifies triples
-    assert_eq!(type_count, 2, "Expected 2 rdf:type triples, got {}", type_count);
-    assert_eq!(name_count, 2, "Expected 2 :name triples, got {}", name_count);
-    assert_eq!(source_count, 2, "Expected 2 :source triples, got {}", source_count);
+    assert_eq!(
+        type_count, 2,
+        "Expected 2 rdf:type triples, got {}",
+        type_count
+    );
+    assert_eq!(
+        name_count, 2,
+        "Expected 2 :name triples, got {}",
+        name_count
+    );
+    assert_eq!(
+        source_count, 2,
+        "Expected 2 :source triples, got {}",
+        source_count
+    );
     assert_eq!(
         reifies_count, 2,
         "Expected 2 rdf:reifies triples (one per row), got {}",
@@ -805,11 +829,8 @@ fn test_integration_rdf12_reification() {
 
 /// Counts triples by predicate in Turtle content and validates rdf:reifies objects are triple terms.
 /// Returns (type_count, name_count, source_count, reifies_count, reifier_subjects).
-fn count_reification_triples(
-    content: &str,
-) -> (usize, usize, usize, usize, Vec<String>) {
-    let parser =
-        RdfParser::from_format(oxrdfio::RdfFormat::Turtle).for_reader(content.as_bytes());
+fn count_reification_triples(content: &str) -> (usize, usize, usize, usize, Vec<String>) {
+    let parser = RdfParser::from_format(oxrdfio::RdfFormat::Turtle).for_reader(content.as_bytes());
     let mut type_count = 0;
     let mut name_count = 0;
     let mut source_count = 0;
@@ -835,7 +856,13 @@ fn count_reification_triples(
             reifier_subjects.push(quad.subject.to_string());
         }
     }
-    (type_count, name_count, source_count, reifies_count, reifier_subjects)
+    (
+        type_count,
+        name_count,
+        source_count,
+        reifies_count,
+        reifier_subjects,
+    )
 }
 
 #[test]
@@ -849,8 +876,16 @@ fn test_integration_rdf12_reification_iri_reifier() {
     let input_path = manifest_dir.join("tests/fixtures/reification_iri.csv");
     let query_path = manifest_dir.join("tests/fixtures/reification_iri.rq");
 
-    assert!(input_path.exists(), "Input file should exist: {:?}", input_path);
-    assert!(query_path.exists(), "Query file should exist: {:?}", query_path);
+    assert!(
+        input_path.exists(),
+        "Input file should exist: {:?}",
+        input_path
+    );
+    assert!(
+        query_path.exists(),
+        "Query file should exist: {:?}",
+        query_path
+    );
 
     let args = vec![
         "oxi_gen".to_string(),
@@ -864,7 +899,11 @@ fn test_integration_rdf12_reification_iri_reifier() {
 
     let mut transform = configure_transform(args);
     let result = transform.transform();
-    assert!(result.is_ok(), "Transform should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Transform should succeed: {:?}",
+        result.err()
+    );
 
     let content = fs::read_to_string(&temp_file).expect("Should read output file");
     let _ = std::fs::remove_file(&temp_file);
@@ -872,10 +911,26 @@ fn test_integration_rdf12_reification_iri_reifier() {
     let (type_count, name_count, source_count, reifies_count, reifier_subjects) =
         count_reification_triples(&content);
 
-    assert_eq!(type_count, 2, "Expected 2 rdf:type triples, got {}", type_count);
-    assert_eq!(name_count, 2, "Expected 2 :name triples, got {}", name_count);
-    assert_eq!(source_count, 2, "Expected 2 :source triples, got {}", source_count);
-    assert_eq!(reifies_count, 2, "Expected 2 rdf:reifies triples, got {}", reifies_count);
+    assert_eq!(
+        type_count, 2,
+        "Expected 2 rdf:type triples, got {}",
+        type_count
+    );
+    assert_eq!(
+        name_count, 2,
+        "Expected 2 :name triples, got {}",
+        name_count
+    );
+    assert_eq!(
+        source_count, 2,
+        "Expected 2 :source triples, got {}",
+        source_count
+    );
+    assert_eq!(
+        reifies_count, 2,
+        "Expected 2 rdf:reifies triples, got {}",
+        reifies_count
+    );
 
     // The reifier subjects should be named IRIs, not blank nodes
     for subj in &reifier_subjects {
@@ -908,8 +963,16 @@ fn test_integration_rdf12_reification_triple_term() {
     let input_path = manifest_dir.join("tests/fixtures/reification.csv");
     let query_path = manifest_dir.join("tests/fixtures/reification_triple_term.rq");
 
-    assert!(input_path.exists(), "Input file should exist: {:?}", input_path);
-    assert!(query_path.exists(), "Query file should exist: {:?}", query_path);
+    assert!(
+        input_path.exists(),
+        "Input file should exist: {:?}",
+        input_path
+    );
+    assert!(
+        query_path.exists(),
+        "Query file should exist: {:?}",
+        query_path
+    );
 
     let args = vec![
         "oxi_gen".to_string(),
@@ -923,7 +986,11 @@ fn test_integration_rdf12_reification_triple_term() {
 
     let mut transform = configure_transform(args);
     let result = transform.transform();
-    assert!(result.is_ok(), "Transform should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Transform should succeed: {:?}",
+        result.err()
+    );
 
     let content = fs::read_to_string(&temp_file).expect("Should read output file");
     let _ = std::fs::remove_file(&temp_file);
@@ -931,10 +998,26 @@ fn test_integration_rdf12_reification_triple_term() {
     let (type_count, name_count, source_count, reifies_count, _) =
         count_reification_triples(&content);
 
-    assert_eq!(type_count, 2, "Expected 2 rdf:type triples, got {}", type_count);
-    assert_eq!(name_count, 2, "Expected 2 :name triples, got {}", name_count);
-    assert_eq!(source_count, 2, "Expected 2 :source triples, got {}", source_count);
-    assert_eq!(reifies_count, 2, "Expected 2 rdf:reifies triples, got {}", reifies_count);
+    assert_eq!(
+        type_count, 2,
+        "Expected 2 rdf:type triples, got {}",
+        type_count
+    );
+    assert_eq!(
+        name_count, 2,
+        "Expected 2 :name triples, got {}",
+        name_count
+    );
+    assert_eq!(
+        source_count, 2,
+        "Expected 2 :source triples, got {}",
+        source_count
+    );
+    assert_eq!(
+        reifies_count, 2,
+        "Expected 2 rdf:reifies triples, got {}",
+        reifies_count
+    );
 }
 
 #[test]
@@ -948,8 +1031,16 @@ fn test_integration_rdf12_reification_annotation() {
     let input_path = manifest_dir.join("tests/fixtures/reification.csv");
     let query_path = manifest_dir.join("tests/fixtures/reification_annotation.rq");
 
-    assert!(input_path.exists(), "Input file should exist: {:?}", input_path);
-    assert!(query_path.exists(), "Query file should exist: {:?}", query_path);
+    assert!(
+        input_path.exists(),
+        "Input file should exist: {:?}",
+        input_path
+    );
+    assert!(
+        query_path.exists(),
+        "Query file should exist: {:?}",
+        query_path
+    );
 
     let args = vec![
         "oxi_gen".to_string(),
@@ -963,16 +1054,31 @@ fn test_integration_rdf12_reification_annotation() {
 
     let mut transform = configure_transform(args);
     let result = transform.transform();
-    assert!(result.is_ok(), "Transform should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Transform should succeed: {:?}",
+        result.err()
+    );
 
     let content = fs::read_to_string(&temp_file).expect("Should read output file");
     let _ = std::fs::remove_file(&temp_file);
 
     // Annotation syntax does NOT produce rdf:type triples (no `a :Person` in query)
-    let (_, name_count, source_count, reifies_count, _) =
-        count_reification_triples(&content);
+    let (_, name_count, source_count, reifies_count, _) = count_reification_triples(&content);
 
-    assert_eq!(name_count, 2, "Expected 2 :name triples, got {}", name_count);
-    assert_eq!(source_count, 2, "Expected 2 :source triples, got {}", source_count);
-    assert_eq!(reifies_count, 2, "Expected 2 rdf:reifies triples, got {}", reifies_count);
+    assert_eq!(
+        name_count, 2,
+        "Expected 2 :name triples, got {}",
+        name_count
+    );
+    assert_eq!(
+        source_count, 2,
+        "Expected 2 :source triples, got {}",
+        source_count
+    );
+    assert_eq!(
+        reifies_count, 2,
+        "Expected 2 rdf:reifies triples, got {}",
+        reifies_count
+    );
 }
