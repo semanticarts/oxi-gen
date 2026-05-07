@@ -802,3 +802,177 @@ fn test_integration_rdf12_reification() {
         "Turtle output should contain rdf:reifies triples"
     );
 }
+
+/// Counts triples by predicate in Turtle content and validates rdf:reifies objects are triple terms.
+/// Returns (type_count, name_count, source_count, reifies_count, reifier_subjects).
+fn count_reification_triples(
+    content: &str,
+) -> (usize, usize, usize, usize, Vec<String>) {
+    let parser =
+        RdfParser::from_format(oxrdfio::RdfFormat::Turtle).for_reader(content.as_bytes());
+    let mut type_count = 0;
+    let mut name_count = 0;
+    let mut source_count = 0;
+    let mut reifies_count = 0;
+    let mut reifier_subjects = Vec::new();
+
+    for q in parser {
+        let quad = q.expect("All output triples must be valid Turtle");
+        let pred = quad.predicate.as_str();
+        if pred == rdf::TYPE.as_str() {
+            type_count += 1;
+        } else if pred == "https://test.com/d/name" {
+            name_count += 1;
+        } else if pred == "https://test.com/d/source" {
+            source_count += 1;
+        } else if pred == rdf::REIFIES.as_str() {
+            reifies_count += 1;
+            assert!(
+                matches!(quad.object, oxrdf::Term::Triple(_)),
+                "rdf:reifies object should be a triple term, got: {}",
+                quad.object
+            );
+            reifier_subjects.push(quad.subject.to_string());
+        }
+    }
+    (type_count, name_count, source_count, reifies_count, reifier_subjects)
+}
+
+#[test]
+fn test_integration_rdf12_reification_iri_reifier() {
+    // Test the reifier syntax (~?var) with a real IRI as the statement identifier
+    // instead of a blank node. The CSV provides a :stmt column that becomes the reifier IRI.
+    let temp_file = std::env::temp_dir().join("oxi_gen_test_reification_iri.ttl");
+    let _ = std::fs::remove_file(&temp_file);
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let input_path = manifest_dir.join("tests/fixtures/reification_iri.csv");
+    let query_path = manifest_dir.join("tests/fixtures/reification_iri.rq");
+
+    assert!(input_path.exists(), "Input file should exist: {:?}", input_path);
+    assert!(query_path.exists(), "Query file should exist: {:?}", query_path);
+
+    let args = vec![
+        "oxi_gen".to_string(),
+        "--input".to_string(),
+        input_path.to_str().unwrap().to_string(),
+        "--query".to_string(),
+        query_path.to_str().unwrap().to_string(),
+        "--output".to_string(),
+        temp_file.to_str().unwrap().to_string(),
+    ];
+
+    let mut transform = configure_transform(args);
+    let result = transform.transform();
+    assert!(result.is_ok(), "Transform should succeed: {:?}", result.err());
+
+    let content = fs::read_to_string(&temp_file).expect("Should read output file");
+    let _ = std::fs::remove_file(&temp_file);
+
+    let (type_count, name_count, source_count, reifies_count, reifier_subjects) =
+        count_reification_triples(&content);
+
+    assert_eq!(type_count, 2, "Expected 2 rdf:type triples, got {}", type_count);
+    assert_eq!(name_count, 2, "Expected 2 :name triples, got {}", name_count);
+    assert_eq!(source_count, 2, "Expected 2 :source triples, got {}", source_count);
+    assert_eq!(reifies_count, 2, "Expected 2 rdf:reifies triples, got {}", reifies_count);
+
+    // The reifier subjects should be named IRIs, not blank nodes
+    for subj in &reifier_subjects {
+        assert!(
+            subj.starts_with('<'),
+            "Reifier subject should be a named IRI, got: {}",
+            subj
+        );
+    }
+    assert!(
+        reifier_subjects.iter().any(|s| s.contains("stmt_alice")),
+        "Should contain :stmt_alice as a reifier IRI, got: {:?}",
+        reifier_subjects
+    );
+    assert!(
+        reifier_subjects.iter().any(|s| s.contains("stmt_bob")),
+        "Should contain :stmt_bob as a reifier IRI, got: {:?}",
+        reifier_subjects
+    );
+}
+
+#[test]
+fn test_integration_rdf12_reification_triple_term() {
+    // Test the reified triple form: << s p o >> used as a subject.
+    // This is the << ... >> syntax where the triple term appears directly as a subject.
+    let temp_file = std::env::temp_dir().join("oxi_gen_test_reification_tt.ttl");
+    let _ = std::fs::remove_file(&temp_file);
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let input_path = manifest_dir.join("tests/fixtures/reification.csv");
+    let query_path = manifest_dir.join("tests/fixtures/reification_triple_term.rq");
+
+    assert!(input_path.exists(), "Input file should exist: {:?}", input_path);
+    assert!(query_path.exists(), "Query file should exist: {:?}", query_path);
+
+    let args = vec![
+        "oxi_gen".to_string(),
+        "--input".to_string(),
+        input_path.to_str().unwrap().to_string(),
+        "--query".to_string(),
+        query_path.to_str().unwrap().to_string(),
+        "--output".to_string(),
+        temp_file.to_str().unwrap().to_string(),
+    ];
+
+    let mut transform = configure_transform(args);
+    let result = transform.transform();
+    assert!(result.is_ok(), "Transform should succeed: {:?}", result.err());
+
+    let content = fs::read_to_string(&temp_file).expect("Should read output file");
+    let _ = std::fs::remove_file(&temp_file);
+
+    let (type_count, name_count, source_count, reifies_count, _) =
+        count_reification_triples(&content);
+
+    assert_eq!(type_count, 2, "Expected 2 rdf:type triples, got {}", type_count);
+    assert_eq!(name_count, 2, "Expected 2 :name triples, got {}", name_count);
+    assert_eq!(source_count, 2, "Expected 2 :source triples, got {}", source_count);
+    assert_eq!(reifies_count, 2, "Expected 2 rdf:reifies triples, got {}", reifies_count);
+}
+
+#[test]
+fn test_integration_rdf12_reification_annotation() {
+    // Test the annotation syntax: ?s :p ?o {| :source ?src |} .
+    // This is syntactic sugar that desugars to the same rdf:reifies triple pattern.
+    let temp_file = std::env::temp_dir().join("oxi_gen_test_reification_annot.ttl");
+    let _ = std::fs::remove_file(&temp_file);
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let input_path = manifest_dir.join("tests/fixtures/reification.csv");
+    let query_path = manifest_dir.join("tests/fixtures/reification_annotation.rq");
+
+    assert!(input_path.exists(), "Input file should exist: {:?}", input_path);
+    assert!(query_path.exists(), "Query file should exist: {:?}", query_path);
+
+    let args = vec![
+        "oxi_gen".to_string(),
+        "--input".to_string(),
+        input_path.to_str().unwrap().to_string(),
+        "--query".to_string(),
+        query_path.to_str().unwrap().to_string(),
+        "--output".to_string(),
+        temp_file.to_str().unwrap().to_string(),
+    ];
+
+    let mut transform = configure_transform(args);
+    let result = transform.transform();
+    assert!(result.is_ok(), "Transform should succeed: {:?}", result.err());
+
+    let content = fs::read_to_string(&temp_file).expect("Should read output file");
+    let _ = std::fs::remove_file(&temp_file);
+
+    // Annotation syntax does NOT produce rdf:type triples (no `a :Person` in query)
+    let (_, name_count, source_count, reifies_count, _) =
+        count_reification_triples(&content);
+
+    assert_eq!(name_count, 2, "Expected 2 :name triples, got {}", name_count);
+    assert_eq!(source_count, 2, "Expected 2 :source triples, got {}", source_count);
+    assert_eq!(reifies_count, 2, "Expected 2 rdf:reifies triples, got {}", reifies_count);
+}
