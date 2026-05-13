@@ -191,9 +191,6 @@ impl OxiGen {
                     first_time = false;
                 }
 
-                // if test_rows != 0 && row == test_rows {   
-                //     continue;  
-                // }
             }
 
             // If deduplicating, flush remaining store to output
