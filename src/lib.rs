@@ -47,16 +47,10 @@ impl OxiGen {
 
         let mut csv_senders = vec![];
         let mut csv_receivers = vec![];
-        // for (sender, receiver) in (0..num_workers).map(|_| sync_channel(100)) {
-        //     csv_senders.push(sender);
-        //     csv_receivers.push(receiver);
-        // }
-        for _ in 0..num_workers {
-            let (sender, receiver) = sync_channel(100);
+        for (sender, receiver) in (0..num_workers).map(|_| sync_channel(100)) {
             csv_senders.push(sender);
             csv_receivers.push(receiver);
         }
-
         let (triple_tx, triple_rx) = mpsc::channel();
 
         let query_str = fs::read_to_string(&self.query).unwrap();
@@ -118,7 +112,7 @@ impl OxiGen {
                             }
                         }
 
-                        if query_vars.contains(&"ROWNUM".to_string()) {
+                        if query_vars.contains("ROWNUM") {
                             prepared = prepared.substitute_variable(
                                 Variable::new("ROWNUM").unwrap(),
                                 Literal::from(row),
@@ -132,7 +126,7 @@ impl OxiGen {
                         }
                     }
                     // eprintln!("Sending {}: {:?}", row, &row_triples);
-                    triple_tx.send((row, row_triples)).unwrap();
+                    triple_tx.send(row_triples).unwrap();
                     processed += 1;
                     if processed % 50000 == 0 {
                         // eprintln!("Transformer {tid} processed {processed} rows");
@@ -175,9 +169,8 @@ impl OxiGen {
             let mut first_time = true;
             let mut store = HashSet::<Triple>::new();
 
-            // we no longer need 'row'
-            while let Ok((_, row_triples)) = triple_rx.recv() {
-                // eprintln!("Received {}: {:?}", row, &row_triples);
+            while let Ok(row_triples) = triple_rx.recv() {
+                // eprintln!("Received {}: {:?}", &row_triples);
                 store.extend(row_triples);
                 if !store.is_empty() && (dedup == 0 || store.len() >= dedup.try_into().unwrap()) {
                     flush_store(
@@ -247,7 +240,7 @@ impl OxiGen {
             let mut transformer = 0;
             for result in rdr.records() {
 
-                //modified to stop breaking output leading to panic
+                // Check for test rows in the reader, and stop sending
                 if test_rows != 0 && row >= test_rows {
                     break;
                 }
