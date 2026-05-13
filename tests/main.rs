@@ -1,5 +1,7 @@
 use flate2::read::GzDecoder;
 use oxi_gen::configure_transform;
+use oxrdf::Graph;
+use oxrdf::graph::CanonicalizationAlgorithm;
 use oxrdfio::RdfParser;
 use std::collections::HashMap;
 use std::fs;
@@ -718,5 +720,119 @@ fn test_integration_quoted_empty_strings_bind_empty() {
         triple_count, 4,
         "Expected 4 triples (all rows produce output with --bind-empty-strings), got {}",
         triple_count
+    );
+}
+
+/// Parses Turtle content into an oxrdf::Graph.
+fn parse_turtle_to_graph(turtle: &str) -> Graph {
+    let parser = RdfParser::from_format(oxrdfio::RdfFormat::Turtle).for_reader(turtle.as_bytes());
+    let mut graph = Graph::new();
+    for q in parser {
+        let quad = q.expect("All output triples must be valid Turtle");
+        graph.insert(oxrdf::TripleRef::new(
+            quad.subject.as_ref(),
+            quad.predicate.as_ref(),
+            quad.object.as_ref(),
+        ));
+    }
+    graph
+}
+
+/// Runs a reification integration test: executes the transform and compares
+/// the output graph against an expected Turtle file (order- and blank-node-independent).
+fn run_reification_test(csv_fixture: &str, query_fixture: &str, expected_fixture: &str) {
+    let temp_file = std::env::temp_dir().join(format!("oxi_gen_test_{}", expected_fixture));
+    let _ = std::fs::remove_file(&temp_file);
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let input_path = manifest_dir.join(format!("tests/fixtures/{}", csv_fixture));
+    let query_path = manifest_dir.join(format!("tests/fixtures/{}", query_fixture));
+    let expected_path = manifest_dir.join(format!("tests/fixtures/{}", expected_fixture));
+
+    assert!(
+        input_path.exists(),
+        "Input file should exist: {:?}",
+        input_path
+    );
+    assert!(
+        query_path.exists(),
+        "Query file should exist: {:?}",
+        query_path
+    );
+    assert!(
+        expected_path.exists(),
+        "Expected file should exist: {:?}",
+        expected_path
+    );
+
+    let args = vec![
+        "oxi_gen".to_string(),
+        "--input".to_string(),
+        input_path.to_str().unwrap().to_string(),
+        "--query".to_string(),
+        query_path.to_str().unwrap().to_string(),
+        "--output".to_string(),
+        temp_file.to_str().unwrap().to_string(),
+    ];
+
+    let mut transform = configure_transform(args);
+    let result = transform.transform();
+    assert!(
+        result.is_ok(),
+        "Transform should succeed: {:?}",
+        result.err()
+    );
+
+    let actual_content = fs::read_to_string(&temp_file).expect("Should read output file");
+    let _ = std::fs::remove_file(&temp_file);
+
+    let expected_content = fs::read_to_string(&expected_path).expect("Should read expected file");
+
+    let mut actual_graph = parse_turtle_to_graph(&actual_content);
+    let mut expected_graph = parse_turtle_to_graph(&expected_content);
+
+    actual_graph.canonicalize(CanonicalizationAlgorithm::Unstable);
+    expected_graph.canonicalize(CanonicalizationAlgorithm::Unstable);
+
+    assert_eq!(
+        actual_graph, expected_graph,
+        "Generated RDF graph does not match expected graph from {}",
+        expected_fixture
+    );
+}
+
+#[test]
+fn test_integration_rdf12_reification() {
+    run_reification_test(
+        "reification.csv",
+        "reification.rq",
+        "reification_expected.ttl",
+    );
+}
+
+#[test]
+fn test_integration_rdf12_reification_iri_reifier() {
+    run_reification_test(
+        "reification_iri.csv",
+        "reification_iri.rq",
+        "reification_iri_expected.ttl",
+    );
+}
+
+#[test]
+fn test_integration_rdf12_reification_triple_term() {
+    run_reification_test(
+        "reification.csv",
+        "reification_triple_term.rq",
+        "reification_triple_term_expected.ttl",
+    );
+}
+
+#[test]
+fn test_integration_rdf12_reification_annotation() {
+    run_reification_test(
+        "reification.csv",
+        "reification_annotation.rq",
+        "reification_annotation_expected.ttl",
     );
 }
