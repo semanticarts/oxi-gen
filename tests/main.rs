@@ -846,8 +846,16 @@ fn test_integration_test_row_limit() {
     let input_path = manifest_dir.join("tests/fixtures/data_100.csv");
     let query_path = manifest_dir.join("tests/fixtures/with_dup.rq");
 
-    assert!(input_path.exists(), "Input file should exist: {:?}", input_path);
-    assert!(query_path.exists(), "Query file should exist: {:?}", query_path);
+    assert!(
+        input_path.exists(),
+        "Input file should exist: {:?}",
+        input_path
+    );
+    assert!(
+        query_path.exists(),
+        "Query file should exist: {:?}",
+        query_path
+    );
 
     let args = vec![
         "oxi_gen".to_string(),
@@ -864,19 +872,30 @@ fn test_integration_test_row_limit() {
 
     let mut transform = configure_transform(args);
     let result = transform.transform();
-    assert!(result.is_ok(), "Transform should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Transform should succeed: {:?}",
+        result.err()
+    );
 
-    assert!(temp_file.exists(), "Output file should exist at {:?}", temp_file);
+    assert!(
+        temp_file.exists(),
+        "Output file should exist at {:?}",
+        temp_file
+    );
 
     let file = fs::File::open(&temp_file).expect("Should open output file");
     let parser = RdfParser::from_format(oxrdfio::RdfFormat::NTriples).for_reader(file);
-    let triples: Vec<_> = parser.collect::<Result<_, _>>().expect("Output must be valid N-Triples");
+    let triples: Vec<_> = parser
+        .collect::<Result<_, _>>()
+        .expect("Output must be valid N-Triples");
 
     let _ = std::fs::remove_file(&temp_file);
 
     // with_dup.rq emits 2 FixedMeta triples + 4 per data row; --test=3 caps at 3 rows
     assert_eq!(
-        triples.len(), 14,
+        triples.len(),
+        14,
         "Expected 14 triples (2 FixedMeta + 4×3 rows), got {}",
         triples.len()
     );

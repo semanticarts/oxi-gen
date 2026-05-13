@@ -183,7 +183,6 @@ impl OxiGen {
                     .unwrap();
                     first_time = false;
                 }
-
             }
 
             // If deduplicating, flush remaining store to output
@@ -239,7 +238,6 @@ impl OxiGen {
             let mut row = 0;
             let mut transformer = 0;
             for result in rdr.records() {
-
                 // Check for test rows in the reader, and stop sending
                 if test_rows != 0 && row >= test_rows {
                     break;
