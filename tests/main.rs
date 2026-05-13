@@ -741,7 +741,7 @@ fn parse_turtle_to_graph(turtle: &str) -> Graph {
 /// Runs a reification integration test: executes the transform and compares
 /// the output graph against an expected Turtle file (order- and blank-node-independent).
 fn run_reification_test(csv_fixture: &str, query_fixture: &str, expected_fixture: &str) {
-    let temp_file = std::env::temp_dir().join(format!("oxi_gen_test_{}.ttl", expected_fixture));
+    let temp_file = std::env::temp_dir().join(format!("oxi_gen_test_{}", expected_fixture));
     let _ = std::fs::remove_file(&temp_file);
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
