@@ -111,6 +111,7 @@ impl OxiGen {
                                 }
                             }
                         }
+
                         if query_vars.contains("ROWNUM") {
                             prepared = prepared.substitute_variable(
                                 Variable::new("ROWNUM").unwrap(),
@@ -125,7 +126,7 @@ impl OxiGen {
                         }
                     }
                     // eprintln!("Sending {}: {:?}", row, &row_triples);
-                    triple_tx.send((row, row_triples)).unwrap();
+                    triple_tx.send(row_triples).unwrap();
                     processed += 1;
                     if processed % 50000 == 0 {
                         // eprintln!("Transformer {tid} processed {processed} rows");
@@ -168,8 +169,8 @@ impl OxiGen {
             let mut first_time = true;
             let mut store = HashSet::<Triple>::new();
 
-            while let Ok((row, row_triples)) = triple_rx.recv() {
-                // eprintln!("Received {}: {:?}", row, &row_triples);
+            while let Ok(row_triples) = triple_rx.recv() {
+                // eprintln!("Received {}: {:?}", &row_triples);
                 store.extend(row_triples);
                 if !store.is_empty() && (dedup == 0 || store.len() >= dedup.try_into().unwrap()) {
                     flush_store(
@@ -181,10 +182,6 @@ impl OxiGen {
                     )
                     .unwrap();
                     first_time = false;
-                }
-
-                if test_rows != 0 && row == test_rows {
-                    break;
                 }
             }
 
@@ -241,6 +238,11 @@ impl OxiGen {
             let mut row = 0;
             let mut transformer = 0;
             for result in rdr.records() {
+                // Check for test rows in the reader, and stop sending
+                if test_rows != 0 && row >= test_rows {
+                    break;
+                }
+
                 // The iterator yields Result<StringRecord, Error>, so we check the
                 // error here.
                 let record: Vec<String> = match result {
