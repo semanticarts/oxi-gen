@@ -47,10 +47,16 @@ impl OxiGen {
 
         let mut csv_senders = vec![];
         let mut csv_receivers = vec![];
-        for (sender, receiver) in (0..num_workers).map(|_| sync_channel(100)) {
+        // for (sender, receiver) in (0..num_workers).map(|_| sync_channel(100)) {
+        //     csv_senders.push(sender);
+        //     csv_receivers.push(receiver);
+        // }
+        for _ in 0..num_workers {
+            let (sender, receiver) = sync_channel(100);
             csv_senders.push(sender);
             csv_receivers.push(receiver);
         }
+
         let (triple_tx, triple_rx) = mpsc::channel();
 
         let query_str = fs::read_to_string(&self.query).unwrap();
@@ -111,7 +117,8 @@ impl OxiGen {
                                 }
                             }
                         }
-                        if query_vars.contains("ROWNUM") {
+
+                        if query_vars.contains(&"ROWNUM".to_string()) {
                             prepared = prepared.substitute_variable(
                                 Variable::new("ROWNUM").unwrap(),
                                 Literal::from(row),
@@ -168,7 +175,8 @@ impl OxiGen {
             let mut first_time = true;
             let mut store = HashSet::<Triple>::new();
 
-            while let Ok((row, row_triples)) = triple_rx.recv() {
+            // we no longer need 'row'
+            while let Ok((_, row_triples)) = triple_rx.recv() {
                 // eprintln!("Received {}: {:?}", row, &row_triples);
                 store.extend(row_triples);
                 if !store.is_empty() && (dedup == 0 || store.len() >= dedup.try_into().unwrap()) {
@@ -183,9 +191,9 @@ impl OxiGen {
                     first_time = false;
                 }
 
-                if test_rows != 0 && row == test_rows {
-                    break;
-                }
+                // if test_rows != 0 && row == test_rows {   
+                //     continue;  
+                // }
             }
 
             // If deduplicating, flush remaining store to output
@@ -241,6 +249,12 @@ impl OxiGen {
             let mut row = 0;
             let mut transformer = 0;
             for result in rdr.records() {
+
+                //modified to stop breaking output leading to panic
+                if test_rows != 0 && row >= test_rows {
+                    break;
+                }
+
                 // The iterator yields Result<StringRecord, Error>, so we check the
                 // error here.
                 let record: Vec<String> = match result {
